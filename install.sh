@@ -1,8 +1,25 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd 2>/dev/null || echo .)"
+
+if [ ! -f "${SCRIPT_DIR}/main.py" ]; then
+    echo "==> main.py not found. Downloading project from GitHub..."
+    TEMP_ZIP="/tmp/rpieasy2-$$.zip"
+    curl -fsSL -o "${TEMP_ZIP}" "https://github.com/enesbcs/rpieasy2/archive/refs/heads/main.zip"
+    mkdir -p "${HOME}/rpieasy2"
+    TEMP_DIR="/tmp/rpieasy2-extract-$$"
+    mkdir -p "${TEMP_DIR}"
+    unzip -q -o "${TEMP_ZIP}" -d "${TEMP_DIR}"
+    cp -r "${TEMP_DIR}/rpieasy2-main/"* "${HOME}/rpieasy2/"
+    rm -rf "${TEMP_DIR}" "${TEMP_ZIP}"
+    echo "==> Extracted to ${HOME}/rpieasy2, running install.sh from there..."
+    cd "${HOME}/rpieasy2"
+    exec bash install.sh
+fi
+
 DEST="${HOME}/rpieasy2"
-SRC="$(cd "$(dirname "$0")" && pwd)"
+SRC="${SCRIPT_DIR}"
 SERVICE_NAME="rpieasy2"
 SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
 
