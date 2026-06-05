@@ -24,7 +24,7 @@ Like ESPEasy, RPiEasy2 lets you connect various sensors and actuators, configure
 ## Installation
 
 ```bash
-git clone <repo-url> rpieasy2
+git clone https://github.com/enesbcs/rpieasy2.git rpieasy2
 cd rpieasy2
 chmod +x install.sh
 ./install.sh
