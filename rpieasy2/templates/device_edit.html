@@ -1,0 +1,218 @@
+{% extends "base.html" %}
+{% block content %}
+<form name='frmselect' method='post'>
+<script>
+function dept_onchange(form) { form.submit(); }
+function task_select_onchange(form) {
+    var ns = document.getElementById('nosave');
+    if (ns) { ns.disabled = false; ns.checked = true; }
+    form.submit();
+}
+function num_out_onchange(sel) {
+    document.getElementById('nosave').disabled = false;
+    document.getElementById('nosave').checked = true;
+    sel.form.submit();
+}
+</script>
+<input type='hidden' name='index' value='{{ index }}'>
+<input type='hidden' name='edit' value='1'>
+<input type='hidden' name='page' value='{{ page }}'>
+<input type='checkbox' name='nosave' id='nosave' style='display:none' disabled>
+<table class='normal'>
+    <TR><TH style='width:300px;'>Task Settings</TH><TH></TH></TR>
+    <TR><TD style='width:150px;' align='left'>Device:<TD>
+    <select class='wide' name='TDNUM' id='TDNUM' onchange='return dept_onchange(frmselect)'>
+        <option value=0 {% if plugin_id == 0 %}selected{% endif %}>- None -</option>
+        {% for pid, info in plugins|dictsort %}
+        <option value='{{ pid }}' {% if plugin_id == pid %}selected{% endif %}>{{ info.get("display_name", info.name) }}</option>
+        {% endfor %}
+    </select>
+    </TD></TR>
+    {% if plugin_id > 0 %}
+    <TR id='tr_TDN'><TD>Name:</TD><TD><input type='text' name='TDN' value='{{ task_config.get("TDN", task_config.get("name", "")) }}' class='wide'></TD></TR>
+    <TR id='tr_TDE'><TD>Enabled:</TD><TD><label class='container'><input type='checkbox' name='TDE'{{ ' checked' if task_config.get("TDE", task_config.get("enabled")) else '' }}><span class='checkmark'></span></label></TD></TR>
+    <TR><TD colspan='2'><H3>Device Settings</H3></TD></TR>
+    {% if form_fields %}
+    {% for field in form_fields %}
+    <TR>
+        <TD>{{ field.label }}</TD>
+        <TD>
+            {% if field.type == 'number' %}
+            <input type='number' name='{{ field.name }}' value='{{ field.value }}' class='widenumber'>
+            {% elif field.type == 'checkbox' %}
+            <label class='container'><input type='checkbox' name='{{ field.name }}'{{ ' checked' if field.value else '' }}><span class='checkmark'></span></label>
+            {% elif field.type == 'select' %}
+            <select name='{{ field.name }}' class='wide'>
+                {% for opt in field.options %}
+                <option value='{{ opt.value }}'{{ ' selected' if (field.value|string) == (opt.value|string) else '' }}>{{ opt.label }}</option>
+                {% endfor %}
+            </select>
+            {% else %}
+            <input type='text' name='{{ field.name }}' value='{{ field.value }}' class='wide'>
+            {% endif %}
+        </TD>
+    </TR>
+    {% endfor %}
+    {% endif %}
+    <TR><TD colspan='2'><H3>Output Configuration</H3></TD></TR>
+    {% if device_properties.output_data_type != 0 %}
+    {{ output_selector_html | safe }}
+    {% endif %}
+    <TR><TD colspan='2'><H3>Data Acquisition</H3></TD></TR>
+    <TR id='tr_TVSE'><TD>Single event with all values:</TD><TD><label class='container'><input type='checkbox' name='TVSE'{{ ' checked' if task_config.get("TVSE") else '' }}><span class='checkmark'></span></label></TD></TR>
+    <TR id='tr_TSDV'><TD>Send derived values:</TD><TD><label class='container'><input type='checkbox' name='TSDV'{{ ' checked' if task_config.get("TSDV") else '' }}><span class='checkmark'></span></label></TD></TR>
+    <TR id='tr_TELD'><TD>Event on change until 20 sec timeout:</TD><TD><label class='container'><input type='checkbox' name='TELD'{{ ' checked' if task_config.get("TELD") else '' }}><span class='checkmark'></span></label></TD></TR>
+    <TR><TD colspan='2'><hr></TD></TR>
+    <TR id='tr_TDT'><TD>Interval:</TD><TD><input type='number' name='TDT' value='{{ task_config.get("TDT", task_config.get("interval", 60)) }}' class='widenumber'> [sec]</TD></TR>
+</table>
+{% if show_config_html %}
+<BR>
+<table class='normal'>
+    <TR><TH colspan='2'>Plugin Config</TH></TR>
+    {{ show_config_html | safe }}
+</table>
+{% endif %}
+{% if show_values_html %}
+<BR>
+<table class='normal'>
+    <TR><TH colspan='2'>Plugin Values</TH></TR>
+    {{ show_values_html | safe }}
+</table>
+{% endif %}
+<BR>
+<table class='normal'>
+    {% set has_formula = device_properties.formula_option %}
+    {% set has_stats = device_properties.plugin_stats %}
+    {% set has_vtype = device_properties.custom_vtype_var %}
+    {% set has_mqtt_sc = device_properties.mqtt_state_class %}
+    {% set col_count = 4 %}
+    {% if has_formula %}{% set col_count = col_count + 1 %}{% endif %}
+    {% if has_stats %}{% set col_count = col_count + 2 %}{% endif %}
+    {% if has_vtype %}{% set col_count = col_count + 1 %}{% endif %}
+    {% if has_mqtt_sc %}{% set col_count = col_count + 1 %}{% endif %}
+    <TR><TH colspan='{{ col_count + 3 }}'>Values</TH></TR>
+    <TR>
+        <TH style='width:30px;'>#</TH>
+        <TH>Name</TH>
+        {% if has_formula %}<TH>Formula</TH>{% endif %}
+        <TH style='width:30px;'>Decimals</TH>
+        {% if has_stats %}<TH style='width:30px;'>Stats</TH>{% endif %}
+        <TH style='width:30px;'>Hide</TH>
+        <TH style='width:50px;'>Axis</TH>
+        <TH>Unit of Measure</TH>
+        {% if has_vtype %}<TH>Value Type</TH>{% endif %}
+        {% if has_mqtt_sc %}<TH>MQTT State Class</TH>{% endif %}
+    </TR>
+    {% for vi in range(1, num_out + 1) %}
+    {% set vn = vi %}
+    <TR id='valuerow_{{ vi }}'>
+        <TD>{{ vi }}</TD>
+        <TD><input type='text' name='TDVN{{ vi }}' value='{{ task_config.get("TDVN" ~ vi, "") }}' style='width:80px'></TD>
+        {% if has_formula %}<TD><input type='text' name='TDF{{ vi }}' value='{{ task_config.get("TDF" ~ vi, "") }}' style='width:80px'></TD>{% endif %}
+        <TD><input type='number' name='TDVD{{ vi }}' value='{{ task_config.get("TDVD" ~ vi, 0) }}' class='widenumber'></TD>
+        {% if has_stats %}<TD><label class='container'><input type='checkbox' name='TDS{{ vi }}'{{ ' checked' if task_config.get("TDS" ~ vi) else '' }}><span class='checkmark'></span></label></TD>{% endif %}
+        <TD><label class='container'><input type='checkbox' name='TDSH{{ vi }}'{{ ' checked' if task_config.get("TDSH" ~ vi) else '' }}><span class='checkmark'></span></label></TD>
+        <TD>
+            <select name='TDSA{{ vi }}' style='width:70px'>
+                <option value=0 {{ 'selected' if (task_config.get("TDSA" ~ vi, 0)|int) == 0 else '' }}>L1</option>
+                <option value=1 {{ 'selected' if (task_config.get("TDSA" ~ vi, 0)|int) == 1 else '' }}>L2</option>
+                <option value=2 {{ 'selected' if (task_config.get("TDSA" ~ vi, 0)|int) == 2 else '' }}>L3</option>
+                <option value=3 {{ 'selected' if (task_config.get("TDSA" ~ vi, 0)|int) == 3 else '' }}>R1</option>
+                <option value=4 {{ 'selected' if (task_config.get("TDSA" ~ vi, 0)|int) == 4 else '' }}>R2</option>
+                <option value=5 {{ 'selected' if (task_config.get("TDSA" ~ vi, 0)|int) == 5 else '' }}>R3</option>
+                <option value=6 {{ 'selected' if (task_config.get("TDSA" ~ vi, 0)|int) == 6 else '' }}>R4</option>
+            </select>
+        </TD>
+        <TD>
+            <select name='TUOM{{ vi }}' style='width:100px'>
+                <option value=0 {{ 'selected' if (task_config.get("TUOM" ~ vi, 0)|int) == 0 else '' }}>None</option>
+                {% for group in tuom_options %}
+                {% if group.label != "None" %}
+                <optgroup label='{{ group.label }}'>
+                {% for opt in group.options %}
+                <option value={{ opt.value }} {{ 'selected' if (task_config.get("TUOM" ~ vi, 0)|int) == opt.value else '' }}>{{ opt.label }}</option>
+                {% endfor %}
+                </optgroup>
+                {% endif %}
+                {% endfor %}
+            </select>
+        </TD>
+        {% if has_vtype %}
+        <TD>
+            <select name='TDTV{{ vi }}' style='width:130px'>
+                {% for group in tdtv_options %}
+                <optgroup label='{{ group.label }}'>
+                {% for opt in group.options %}
+                <option value='{{ opt.value }}' {{ 'selected' if (task_config.get("TDTV" ~ vi, 0)|int) == opt.value else '' }}>{{ opt.label }}</option>
+                {% endfor %}
+                </optgroup>
+                {% endfor %}
+            </select>
+        </TD>
+        {% endif %}
+        {% if has_mqtt_sc %}
+        <TD>
+            <select name='TDSC{{ vi }}' style='width:120px'>
+                {% for opt in tdsc_options %}
+                <option value='{{ opt.value }}' {{ 'selected' if (task_config.get("TDSC" ~ vi, 0)|int) == opt.value else '' }}>{{ opt.label }}</option>
+                {% endfor %}
+            </select>
+        </TD>
+        {% endif %}
+    </TR>
+    {% endfor %}
+</table>
+
+<BR>
+<table class='normal'>
+    <TR><TH colspan='3'>Controller Assignment</TH></TR>
+    {% for c in controller_list %}
+    <TR>
+        <TD style='width:30px;'><label class='container'><input type='checkbox' name='TDSD{{ c.idx }}' {{ 'checked' if task_config.get("TDSD" ~ c.idx) else '' }}><span class='checkmark'></span></label></TD>
+        <TD>{{ c.name }}</TD>
+        <TD>IDX: <input class='widenumber' type='number' name='TDID{{ c.idx }}' value='{{ task_config.get("TDID" ~ c.idx, 0) }}'></TD>
+    </TR>
+    {% endfor %}
+</table>
+<BR>
+<table class='normal'>
+    <TR>
+        <TD colspan='2'>
+            <a class='button link' href='/devices'>Close</a>
+            <input class='button link' type='submit' value='Submit' onclick='toasting()'>
+            {% if index >= 0 %}
+            <input type='submit' class='button link' value='Delete' name='del' onclick='toasting()'>
+            {% endif %}
+            <div id='toastmessage'></div>
+        </TD>
+    </TR>
+</table>
+{% endif %}
+</form>
+<script>
+function toasting() {
+    var x = document.getElementById('toastmessage');
+    if (x) { x.innerHTML = 'Submitted'; x.className = 'show'; setTimeout(function(){ x.innerHTML = ''; x.className = ''; }, 2000); }
+}
+(function() {
+    var gpioList = {{ gpio_list | tojson }};
+    document.querySelectorAll('input[name="pin"], input[name="button_pin"]').forEach(function(input) {
+        var select = document.createElement('select');
+        select.name = input.name;
+        select.className = 'wide';
+        gpioList.forEach(function(gpio) {
+            var opt = document.createElement('option');
+            opt.value = gpio.pin;
+            opt.text = gpio.label;
+            if (gpio.special) opt.title = 'Special function: ' + gpio.special;
+            if (!gpio.available) { opt.disabled = true; opt.style.background = '#ff9999'; }
+            if (gpio.in_use) opt.style.background = '#ffcccc';
+            var curVal = parseInt(input.value);
+            if (curVal === gpio.pin) opt.selected = true;
+            select.appendChild(opt);
+        });
+        input.parentNode.replaceChild(select, input);
+    });
+})();
+</script>
+{% endblock %}

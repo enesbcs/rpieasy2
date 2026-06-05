@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block content %}
+<table class='normal'>
+    <TR><TH id='headline' align='left'>Log</TH></TR>
+</table>
+<div id='current_loglevel' style='font-weight: bold;'>Logging: </div>
+<div class='logviewer' id='logcontent'></div>
+Autoscroll: <label class='container'><input type='checkbox' id='autoscroll' name='autoscroll' checked><span id='csautoscroll' class='checkmark'></span></label>
+<BR>
+<script>
+var logLevel = ['Unused', 'Error', 'Info', 'Debug', 'Debug More'];
+(function loopDeLoop(ttl, count) {
+    var el = document.getElementById('logcontent');
+    if (count > 0) return;
+    count = 1;
+    var scrollType = ttl <= 500 ? 'auto' : 'smooth';
+    setTimeout(function() {
+        fetch('/logjson').then(function(r) { return r.json(); }).then(function(data) {
+            var html = '';
+            var lastId = '';
+            for (var i = 0; i < data.Log.nrEntries; i++) {
+                var e = data.Log.Entries[i];
+                var ts = e.timestamp;
+                html += '<div class=level_' + e.level + ' id=' + ts + '>' + e.text + '</div>';
+                lastId = ts;
+            }
+            if (html) {
+                el.innerHTML = html;
+            }
+            document.getElementById('current_loglevel').innerHTML = 'Logging: ' + (data.Log.SettingsWebLogLevelName || 'Debug') + ' (' + data.Log.SettingsWebLogLevel + ')';
+            var autoscroll = document.getElementById('autoscroll').checked;
+            if (autoscroll && lastId) {
+                var scrollEl = document.getElementById(lastId);
+                if (scrollEl) scrollEl.scrollIntoView({behavior: scrollType});
+            }
+            loopDeLoop(data.Log.TTL, 0);
+        }).catch(function(err) {
+            el.innerHTML += '<div>>> ' + err.message + ' <<</div>';
+            loopDeLoop(5000, 0);
+        });
+    }, ttl);
+})(1000, 0);
+</script>
+{% endblock %}

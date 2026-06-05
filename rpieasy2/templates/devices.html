@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+{% block content %}
+<script defer>
+function elId(e){return document.getElementById(e)}
+var _ttl = 1000;
+var _count = 0;
+function fetchValues() {
+    if (_count > 0) return;
+    _count = 1;
+    fetch('/json?view=sensorupdate').then(function(r) { return r.json(); }).then(function(data) {
+        _ttl = data.TTL;
+        if (data.ShowUoM) document.getElementById('showuom').style.display = '';
+        for (var s = 0; s < data.Sensors.length; s++) {
+            var sensor = data.Sensors[s];
+            if (!sensor.TaskValues) continue;
+            for (var v = 0; v < sensor.TaskValues.length; v++) {
+                var val = sensor.TaskValues[v];
+                var vid = 'value_' + (sensor.TaskNumber - 1) + '_' + (val.ValueNumber - 1);
+                var nid = 'valuename_' + (sensor.TaskNumber - 1) + '_' + (val.ValueNumber - 1);
+                var uid = 'valuenuom_' + (sensor.TaskNumber - 1) + '_' + (val.ValueNumber - 1);
+                var ve = elId(vid);
+                var ne = elId(nid);
+                var ue = elId(uid);
+                if (ve) ve.innerHTML = val.Value;
+                if (ne) ne.innerHTML = val.Name + ':';
+                if (ue && val.UoM) ue.innerHTML = val.UoM;
+            }
+        }
+        _count = 0;
+        setTimeout(fetchValues, _ttl);
+    }).catch(function(err) {
+        console.log(err.message);
+        _count = 0;
+        setTimeout(fetchValues, 5000);
+    });
+}
+fetchValues();
+</script>
+<div class='pagination'>
+    Page:
+    {% for p in range(1, total_pages + 1) %}
+    <a class='button link{{ " active" if p == page else "" }}' href='/devices?page={{ p }}'>{{ p }}</a>
+    {% endfor %}
+</div>
+<table class='multirow even' border='1px' frame='box' rules='all'>
+    <TR>
+        <TH style='width:70px;'></TH>
+        <TH style='width:50px;'>Task</TH>
+        <TH style='width:80px;'>Enabled</TH>
+        <TH>Device</TH>
+        <TH>Name</TH>
+        <TH>Port</TH>
+        <TH style='width:100px;'>Ctr (IDX)</TH>
+        <TH>GPIO</TH>
+        <TH>Values <span id='showuom' style='display:none'>(UoM)</span></TH>
+    </TR>
+    {% for slot in page_slots %}
+    {% set task = config.tasks[slot] if slot < config.tasks|length and config.tasks[slot].get("plugin_id") is not none else None %}
+    <TR>
+        {% if task %}
+        {% set pid = task.get("plugin_id")|int %}
+        {% set pinfo = plugins.get(pid) if pid else None %}
+        {% set _tdnum_out = task.get("TDNUM_out", 0)|int %}
+        {% set _num_out = value_count_map.get(_tdnum_out, pinfo.num_values if pinfo else 1) %}
+        <TD><a class='button link' href='/devices?index={{ slot }}'>Edit</a></TD>
+        <TD>{{ slot + 1 }}</TD>
+        <TD><span class='{{ "on" if task.get("TDE", task.get("enabled")) else "off" }}'>{{ "enabled" if task.get("TDE", task.get("enabled")) else "disabled" }}</span></TD>
+        <TD>{{ pinfo.name if pinfo else "ID: " + pid|string if pid else "" }}</TD>
+        <TD>{{ task.get("TDN", task.get("name", "")) }}</TD>
+        <TD>{{ task.get("port", "") }}</TD>
+        <TD>{{ task.get("controller", task.get("idx", "")) }}</TD>
+        <TD>{{ task.get("pin", "") }}</TD>
+        <TD>
+            {% for vi in range(_num_out) %}
+            <div><div class='div_l' id='valuename_{{ slot }}_{{ vi }}'></div> <div class='div_r' id='value_{{ slot }}_{{ vi }}'></div> <span class='div_l' id='valuenuom_{{ slot }}_{{ vi }}' style='font-size:10px;color:#888;'></span> <div class='div_br'></div></div>
+            {% endfor %}
+        </TD>
+        {% else %}
+        <TD><a class='button link' href='/devices?index={{ slot }}'>Add</a></TD>
+        <TD>{{ slot + 1 }}</TD>
+        <TD></TD><TD></TD><TD></TD><TD></TD><TD></TD><TD></TD><TD></TD>
+        {% endif %}
+    </TR>
+    {% endfor %}
+</table>
+<div class='pagination'>
+    Page:
+    {% for p in range(1, total_pages + 1) %}
+    <a class='button link{{ " active" if p == page else "" }}' href='/devices?page={{ p }}'>{{ p }}</a>
+    {% endfor %}
+</div>
+{% endblock %}

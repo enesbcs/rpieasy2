@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block content %}
+<form method='POST' action='/update' enctype='multipart/form-data'>
+<table class='normal'>
+    <TR><TH colspan='2'>Update Firmware</TH></TR>
+    <TR><TD>Firmware ZIP:</TD><TD><input type='file' name='firmware' accept='.zip' class='wide'></TD></TR>
+    <TR><TD></TD><TD><input type='submit' class='button link wide' value='Upload & Install'></TD></TR>
+</table>
+</form>
+{% if ok %}
+<div class='alert'>Update successful! Service will restart shortly.</div>
+{% elif error %}
+<div class='warning'>Error: {{ error }}</div>
+{% endif %}
+{% endblock %}

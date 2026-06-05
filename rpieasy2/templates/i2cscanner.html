@@ -1,0 +1,129 @@
+{% extends "base.html" %}
+{% block content %}
+<BR>
+<table class='normal'>
+  <TR><TH>I2C Scanner</TH><TH></TH></TR>
+  <TR>
+    <TD style='width:150px;'><button id='scanBtn' class='button link wide' onclick='startScan()' style='width:120px;'>Scan</button></TD>
+    <TD><span id='status'>Ready</span></TD>
+  </TR>
+</table>
+<BR>
+<div style='overflow-x:auto;'>
+<table id='i2ctable' class='normal' style='font-family:monospace;font-size:14px;text-align:center;'>
+  <TR>
+    <TD style='width:30px;border:1px solid #555;background:#333;color:white;font-weight:bold;'>&nbsp;</TD>
+    {% for col in range(16) %}
+    <TD style='width:36px;border:1px solid #555;background:#333;color:white;font-weight:bold;'>{{ "%x" % col }}</TD>
+    {% endfor %}
+  </TR>
+  {% for row in range(8) %}
+  <TR>
+    <TD style='border:1px solid #555;background:#333;color:white;font-weight:bold;'>{{ "%02x" % (row*16) }}</TD>
+    {% for col in range(16) %}
+    {% set addr = row*16 + col %}
+    <TD id='cell{{ addr }}' style='border:1px solid #555;
+      {%- if addr == 0 %}background:#ddd;color:#999;
+      {%- else %}background:#f2f2f2;color:#999;
+      {%- endif %}'>
+      {%- if addr == 0 -%}
+        &nbsp;
+      {%- else -%}
+        --
+      {%- endif -%}
+    </TD>
+    {% endfor %}
+  </TR>
+  {% endfor %}
+</table>
+</div>
+<BR>
+<table class='normal'>
+  <TR><TH>Legend</TH></TR>
+  <TR><TD><span style='display:inline-block;width:20px;height:20px;background:#4CAF50;'></span> Device found</TD></TR>
+  <TR><TD><span style='display:inline-block;width:20px;height:20px;background:#f2f2f2;border:1px solid #555;'></span> No device</TD></TR>
+  <TR><TD><span style='display:inline-block;width:20px;height:20px;background:#FFA500;border:1px solid #555;'></span> Scanning</TD></TR>
+  <TR><TD><span style='display:inline-block;width:20px;height:20px;background:#ddd;'></span> Reserved (0x00)</TD></TR>
+</table>
+<BR>
+<div id='resultLog' style='font-family:monospace;font-size:12px;'></div>
+
+<script>
+var evtSource = null;
+
+function startScan() {
+  var btn = document.getElementById('scanBtn');
+  if (evtSource) {
+    evtSource.close();
+    evtSource = null;
+  }
+  btn.disabled = true;
+  btn.textContent = 'Scanning...';
+  document.getElementById('status').textContent = 'Scanning...';
+  document.getElementById('resultLog').innerHTML = '';
+
+  // Reset table cells (addresses 1-127, skip 0x00 which is reserved)
+  for (var i = 1; i < 128; i++) {
+    var cell = document.getElementById('cell' + i);
+    if (cell) {
+      cell.style.background = '#f2f2f2';
+      cell.style.color = '#999';
+      cell.textContent = '--';
+    }
+  }
+
+  evtSource = new EventSource('/api/i2cscan/stream');
+
+  evtSource.addEventListener('progress', function(e) {
+    var data = JSON.parse(e.data);
+    var cell = document.getElementById('cell' + data.addr);
+    if (!cell) return;
+    if (data.status === 'found') {
+      cell.style.background = '#4CAF50';
+      cell.style.color = 'white';
+      cell.style.fontWeight = 'bold';
+      cell.textContent = data.addr.toString(16).padStart(2, '0');
+      var log = document.getElementById('resultLog');
+      var line = 'Found device at 0x' + data.addr.toString(16).padStart(2, '0');
+      if (data.plugins && data.plugins.length > 0) {
+        line += ' &rarr; ' + data.plugins.join(', ');
+      }
+      log.innerHTML += line + '<br>';
+    } else {
+      cell.style.background = '#f2f2f2';
+      cell.style.color = '#999';
+      cell.textContent = '--';
+    }
+  });
+
+  evtSource.addEventListener('scanning', function(e) {
+    var data = JSON.parse(e.data);
+    var cell = document.getElementById('cell' + data.addr);
+    if (cell) {
+      cell.style.background = '#FFA500';
+      cell.style.color = 'black';
+      cell.style.fontWeight = 'bold';
+      cell.textContent = '..';
+    }
+  });
+
+  evtSource.addEventListener('done', function(e) {
+    evtSource.close();
+    evtSource = null;
+    btn.disabled = false;
+    btn.textContent = 'Scan';
+    document.getElementById('status').textContent = 'Scan complete.';
+  });
+
+  evtSource.addEventListener('error', function(e) {
+    var data = null;
+    try { data = JSON.parse(e.data); } catch(ex) {}
+    evtSource.close();
+    evtSource = null;
+    btn.disabled = false;
+    btn.textContent = 'Scan';
+    document.getElementById('status').textContent = 'Error: ' + (data ? data.message : e.message || 'Connection lost');
+  });
+}
+</script>
+{% endblock %}

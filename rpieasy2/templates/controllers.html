@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block content %}
+<form name='frmselect' method='post'>
+<script>
+function dept_onchange(form) { form.submit(); }
+</script>
+<table class='multirow even' border='1px' frame='box' rules='all'>
+    <TR><TH style='width:70px;'></TH><TH style='width:50px;'>Nr</TH><TH style='width:100px;'>Enabled</TH><TH>Protocol</TH><TH>Host</TH><TH>Port</TH></TR>
+    {% for slot in range(3) %}
+    {% set ctrl = config.controllers[slot] if slot < config.controllers|length and config.controllers[slot].get("id") is not none else None %}
+    <TR>
+        {% if ctrl %}
+        <TD><a class='button link' href='/controllers?index={{ slot + 1 }}'>Edit</a></TD>
+        <TD><span style='font-size:20px; background: #00000000;'>&#{{ 10102 + slot }};</span></TD>
+        <TD><span class='{{ "on" if ctrl.get("controllerenabled", ctrl.get("enabled")) else "off" }}'>{{ "enabled" if ctrl.get("controllerenabled", ctrl.get("enabled")) else "disabled" }}</span></TD>
+        <TD>{{ ctrl.get("protocol", "") }}</TD>
+        <TD>{{ ctrl.get("controllerip", ctrl.get("host", "")) }}</TD>
+        <TD>{{ ctrl.get("controllerport", ctrl.get("port", "")) }}</TD>
+        {% else %}
+        <TD><a class='button link' href='/controllers?index={{ slot + 1 }}'>Add</a></TD>
+        <TD><span style='font-size:20px; background: #00000000;'>&#{{ 10102 + slot }};</span></TD>
+        <TD></TD><TD></TD><TD></TD><TD></TD>
+        {% endif %}
+    </TR>
+    {% endfor %}
+</table>
+</form>
+{% endblock %}

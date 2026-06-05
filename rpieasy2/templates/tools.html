@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% block content %}
+<form method='GET' action='/tools'>
+<table class='normal'>
+    <TR><TH style='width:300px;'>Tools</TH><TH></TH></TR>
+    <TR><TD colspan='2'><H3>Command</H3></TD></TR>
+    <TR>
+        <TD colspan='2'>
+            <input type='text' name='command' value='{{ cmd_input }}' placeholder='Enter command...' style='width:400px;'>
+            <input type='submit' class='button link wide' value='Submit' style='width:auto;'>
+            <a href='https://espeasy.readthedocs.io/en/latest/Reference/Command.html' target='_blank' title='List of available commands'>?</a>
+        </TD>
+    </TR>
+    {% if cmd_result %}
+    <TR><TD colspan='2'><pre style='margin:4px 0;padding:4px;background:var(--bg2);border:1px solid var(--border);'>{{ cmd_result }}</pre></TD></TR>
+    {% endif %}
+    <TR><TD colspan='2'><H3>System</H3></TD></TR>
+    <TR><TD HEIGHT='30'><a class='button link wide' id='restart-btn' href='#' onclick='doRestart();return false;'>Restart Service</a></TD>
+        <TD>Restart the rpieasy2 service only</TD></TR>
+    <TR><TD HEIGHT='30'><a class='button link wide' id='reboot-btn' href='#' onclick='doReboot();return false;'>Reboot</a></TD>
+        <TD>Reboot the system</TD></TR>
+    <TR><TD HEIGHT='30'><a class='button link wide' id='shutdown-btn' href='#' onclick='doShutdown();return false;'>Shutdown</a></TD>
+        <TD>Shut down the system (poweroff)</TD></TR>
+    <script>
+    function doRestart() {
+        var btn = document.getElementById('restart-btn');
+        btn.textContent = 'Restarting...';
+        fetch('/api/system/restart', {method:'POST'}).then(function(r) {
+            if (r.ok) btn.textContent = 'Restart initiated...';
+        }).catch(function() { btn.textContent = 'Restart failed'; });
+    }
+    function doReboot() {
+        var pwd = prompt('Enter sudo password (leave empty if NOPASSWD configured):');
+        var body = pwd ? JSON.stringify({password: pwd}) : '{}';
+        var btn = document.getElementById('reboot-btn');
+        btn.textContent = 'Rebooting...';
+        fetch('/api/system/reboot', {method:'POST', headers:{'Content-Type':'application/json'}, body:body}).then(function(r) {
+            if (r.ok) btn.textContent = 'Reboot initiated...';
+        }).catch(function() { btn.textContent = 'Reboot failed'; });
+    }
+    function doShutdown() {
+        var btn = document.getElementById('shutdown-btn');
+        btn.textContent = 'Shutting down...';
+        fetch('/api/system/shutdown', {method:'POST', headers:{'Content-Type':'application/json'}, body:'{}'}).then(function(r) {
+            if (r.ok) btn.textContent = 'Shutdown initiated...';
+        }).catch(function() { btn.textContent = 'Shutdown failed'; });
+    }
+    </script>
+    <TR><TD HEIGHT='30'><a class='button link wide' href='/log'>Log</a></TD>
+        <TD>Open log output</TD></TR>
+    <TR><TD HEIGHT='30'><a class='button link wide' href='/sysinfo'>Info</a></TD>
+        <TD>Open system info page</TD></TR>
+    <TR><TD HEIGHT='30'><a class='button link wide' href='/advanced'>Advanced</a></TD>
+        <TD>Open advanced settings page</TD></TR>
+    <TR><TD HEIGHT='30'><a class='button link wide' href='/json'>Show JSON</a></TD>
+        <TD>Open JSON output</TD></TR>
+    <TR><TD HEIGHT='30'><a class='button link wide' href='/sysvars'>System Variables</a></TD>
+        <TD>Show all system variables and conversions</TD></TR>
+    <TR><TD HEIGHT='30'><a class='button link wide' href='/pluginlist'>Included Plugins</a></TD>
+        <TD>Show all plugins, controllers and notifiers</TD></TR>
+    <TR><TD colspan='2'><H3>Interfaces</H3></TD></TR>
+    <TR><TD HEIGHT='30'><a class='button link wide' href='/i2cscanner'>I2C Scan</a></TD>
+        <TD>Scan for I2C devices (live progress)</TD></TR>
+    <TR><TD colspan='2'><H3>Diagnostics</H3></TD></TR>
+    <TR><TD HEIGHT='30'><a class='button link wide' href='/pinstates'>Pin States</a></TD>
+        <TD>Display current GPIO pin states</TD></TR>
+    <TR><TD colspan='2'><H3>Firmware</H3></TD></TR>
+    <TR><TD HEIGHT='30'><a class='button link wide' href='/update'>Update Firmware</a></TD>
+        <TD>Upload and install a firmware update ZIP</TD></TR>
+    <TR><TD HEIGHT='30'><a class='button link wide' href='/tools?cmd=backup'>Backup</a></TD>
+        <TD>Save all configuration as a ZIP archive</TD></TR>
+    <TR><TD HEIGHT='30'>
+        <form method='POST' action='/tools?cmd=restore' enctype='multipart/form-data' style='display:inline'>
+            <input type='file' name='backup' accept='.zip'>
+            <input type='submit' class='button link wide' value='Restore'>
+        </form>
+    </TD><TD>Restore settings from a backup ZIP</TD></TR>
+</table>
+</form>
+{% endblock %}

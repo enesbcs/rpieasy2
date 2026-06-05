@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% block content %}
+<form id='advanced-form'>
+<table class='normal'>
+    <TR><TH colspan='2'>Advanced Settings</TH></TR>
+    <TR><TH colspan='2' style='background:#555;'>P2P Networking</TH></TR>
+    <TR><TD>ESP Easy P2P UDP Port:</TD><TD><input type='number' name='p2p_port' value='{{ config.system.get("p2p_port", 8266) }}' class='widenumber'></TD></TR>
+    <TR><TD colspan='2'><hr></TD></TR>
+    <TR><TH colspan='2' style='background:#555;'>Log Settings</TH></TR>
+    <TR><TD>Syslog IP:</TD><TD><input type='text' name='syslog_ip' value='{{ config.system.get("syslog_ip", "") }}' class='wide'></TD></TR>
+    <TR><TD>Syslog UDP Port:</TD><TD><input type='number' name='syslog_port' value='{{ config.system.get("syslog_port", 514) }}' class='widenumber'></TD></TR>
+    <TR><TD>Syslog Log Level:</TD><TD>
+        <select name='syslog_level' class='widenumber'>
+            <option value='0' {{ 'selected' if config.system.get("syslog_level", 0)|int == 0 else '' }}>None</option>
+            <option value='1' {{ 'selected' if config.system.get("syslog_level", 0)|int == 1 else '' }}>Error</option>
+            <option value='2' {{ 'selected' if config.system.get("syslog_level", 0)|int == 2 else '' }}>Info</option>
+            <option value='3' {{ 'selected' if config.system.get("syslog_level", 0)|int == 3 else '' }}>Debug</option>
+        </select>
+    </TD></TR>
+    <TR><TD>Web Log Level:</TD><TD>
+        <select name='web_log_level' class='widenumber'>
+            <option value='0' {{ 'selected' if config.system.get("web_log_level", 2)|int == 0 else '' }}>None</option>
+            <option value='1' {{ 'selected' if config.system.get("web_log_level", 2)|int == 1 else '' }}>Error</option>
+            <option value='2' {{ 'selected' if config.system.get("web_log_level", 2)|int == 2 else '' }}>Info</option>
+            <option value='3' {{ 'selected' if config.system.get("web_log_level", 2)|int == 3 else '' }}>Debug</option>
+        </select>
+    </TD></TR>
+    <TR><TD colspan='2'><hr></TD></TR>
+    <TR><TH colspan='2' style='background:#555;'>Time Settings</TH></TR>
+    <TR><TD>Use NTP:</TD><TD><label class='container'><input type='checkbox' name='use_ntp'{{ ' checked' if config.system.get("use_ntp", True) else '' }}><span class='checkmark'></span></label></TD></TR>
+    <TR><TD>NTP Hostname:</TD><TD><input type='text' name='ntp_host' value='{{ config.system.get("ntp_host", "pool.ntp.org") }}' class='wide'></TD></TR>
+    <TR><TD>Timezone Offset (UTC +):</TD><TD><input type='number' name='timezone_offset' value='{{ config.system.get("timezone_offset", 0) }}' class='widenumber'> minutes</TD></TR>
+    <TR><TD colspan='2'><hr></TD></TR>
+    <TR><TH colspan='2' style='background:#555;'>Webserver</TH></TR>
+    <TR><TD>Webserver Port:</TD><TD><input type='number' name='web_port' value='{{ config.system.get("web_port", 80) }}' class='widenumber'></TD></TR>
+    <TR><TD>Web Light/Dark Mode:</TD><TD>
+        <select name='web_theme' class='widenumber'>
+            <option value='auto' {{ 'selected' if config.system.get("web_theme", "auto") == "auto" else '' }}>Auto</option>
+            <option value='light' {{ 'selected' if config.system.get("web_theme", "auto") == "light" else '' }}>Light</option>
+            <option value='dark' {{ 'selected' if config.system.get("web_theme", "auto") == "dark" else '' }}>Dark</option>
+        </select>
+    </TD></TR>
+    <TR><TD colspan='2'><hr></TD></TR>
+    <TR><TH colspan='2' style='background:#555;'>Rules</TH></TR>
+    <TR><TD>Enable Rules:</TD><TD><label class='container'><input type='checkbox' name='enable_rules'{{ ' checked' if config.system.get("enable_rules") else '' }}><span class='checkmark'></span></label></TD></TR>
+    <TR><TD colspan='2'><hr></TD></TR>
+    <TR><TH colspan='2' style='background:#555;'>Special and Experimental Settings</TH></TR>
+    <TR><TD>JSON bool output without quotes:</TD><TD><label class='container'><input type='checkbox' name='json_bool_output_without_quotes'{{ ' checked' if config.system.get("json_bool_output_without_quotes") else '' }}><span class='checkmark'></span></label></TD></TR>
+    <TR><TD>Collect Timing Statistics:</TD><TD><label class='container'><input type='checkbox' name='collect_timing_statistics'{{ ' checked' if config.system.get("collect_timing_statistics") else '' }}><span class='checkmark'></span></label></TD></TR>
+    <TR><TD>Allow TaskValueSet on all plugins:</TD><TD><label class='container'><input type='checkbox' name='allow_taskvalueset_on_all_plugins'{{ ' checked' if config.system.get("allow_taskvalueset_on_all_plugins") else '' }}><span class='checkmark'></span></label></TD></TR>
+    <TR><TD>Show Unit of Measure:</TD><TD><label class='container'><input type='checkbox' name='show_unit_of_measure'{{ ' checked' if config.system.get("show_unit_of_measure") else '' }}><span class='checkmark'></span></label></TD></TR>
+    <TR><TD>Disable Rules auto-completion:</TD><TD><label class='container'><input type='checkbox' name='disable_rules_auto_completion'{{ ' checked' if config.system.get("disable_rules_auto_completion") else '' }}><span class='checkmark'></span></label></TD></TR>
+    <TR><TD></TD><TD><div class='note'>Note: Also disables Rules syntax highlighting!</div></TD></TR>
+</table>
+<button type='submit' class='button'>Save</button>
+</form>
+<script>
+document.getElementById('advanced-form').addEventListener('submit', async function(e) {
+    e.preventDefault();
+    const data = { system: {} };
+    const form = this;
+    for (const el of form.querySelectorAll('[name]')) {
+        if (el.type === 'checkbox') {
+            data.system[el.name] = el.checked;
+        } else if (el.type === 'number') {
+            data.system[el.name] = parseInt(el.value);
+        } else {
+            data.system[el.name] = el.value;
+        }
+    }
+    const resp = await fetch('/api/config', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(data)
+    });
+    if (resp.ok) alert('Advanced settings saved!');
+    else alert('Save failed!');
+});
+</script>
+{% endblock %}

@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% block content %}
+<form name='frmselect' method='post'>
+<script>
+function dept_onchange(form) { form.submit(); }
+async function testNotification(idx) {
+    const btn = document.getElementById('test-btn');
+    btn.disabled = true;
+    btn.innerHTML = 'Sending...';
+    try {
+        const resp = await fetch('/api/notification/' + idx + '/test', { method: 'POST' });
+        const data = await resp.json();
+        alert(data.message || 'Test sent!');
+    } catch(e) {
+        alert('Test failed: ' + e.message);
+    }
+    btn.disabled = false;
+    btn.innerHTML = 'Test';
+}
+</script>
+<input type='hidden' name='index' value='{{ index }}'>
+<table class='normal'>
+    <TR><TH style='width:300px;'>Notification Settings</TH><TH></TH></TR>
+    <TR><TD>Notification:</td><TD>
+    <select class='wide' name='notification' id='notification' onchange='return dept_onchange(frmselect)'>
+        <option value=0 {% if notif_config.get("id", 0) == 0 %}selected{% endif %}>- None -</option>
+        {% for nid, info in notifiers|dictsort %}
+        <option value='{{ nid }}' {% if notif_config.get("id") == nid %}selected{% endif %}>{{ info.name }}</option>
+        {% endfor %}
+    </select>
+    </TD></TR>
+    {% if notif_config.get("id") and notif_config.get("id") != 0 %}
+    <TR><TD colspan='2'><hr></TD></TR>
+    <TR><TD>Name</TD><TD><input type='text' name='name' value='{{ notif_config.get("name", "") }}' class='wide'></TD></TR>
+    <TR><TD>Enabled</TD><TD><label class='container'><input type='checkbox' name='enabled'{{ ' checked' if notif_config.get("enabled") else '' }}><span class='checkmark'></span></label></TD></TR>
+    <TR><TD>Timeout (s)</TD><TD><input type='number' name='timeout' value='{{ notif_config.get("timeout", 10) }}' class='widenumber'></TD></TR>
+    <TR><TD colspan='2'><hr></TD></TR>
+    <TR><TH colspan='2' style='background:#555;'>Email Settings</TH></TR>
+    <TR><TD>Server</TD><TD><input type='text' name='server' value='{{ notif_config.get("server", "") }}' class='wide'></TD></TR>
+    <TR><TD>Port</TD><TD><input type='number' name='port' value='{{ notif_config.get("port", "") }}' class='widenumber'></TD></TR>
+    <TR><TD>Username</TD><TD><input type='text' name='username' value='{{ notif_config.get("username", "") }}' class='wide'></TD></TR>
+    <TR><TD>Password</TD><TD><input type='password' name='password' value='{{ notif_config.get("password", "") }}' class='wide'></TD></TR>
+    <TR><TD>Sender</TD><TD><input type='text' name='sender' value='{{ notif_config.get("sender", "") }}' class='wide'></TD></TR>
+    <TR><TD>Recipients</TD><TD><input type='text' name='recipients' value='{{ notif_config.get("recipients", "") }}' class='wide'></TD></TR>
+    <TR><TD>TLS</TD><TD><label class='container'><input type='checkbox' name='tls'{{ ' checked' if notif_config.get("tls", True) else '' }}><span class='checkmark'></span></label></TD></TR>
+    <TR><TD colspan='2'><hr></TD></TR>
+    <TR><TH colspan='2' style='background:#555;'>GPIO / Buzzer Settings</TH></TR>
+    <TR><TD>GPIO Pin</TD><TD><input type='number' name='pin' value='{{ notif_config.get("pin", "") }}' class='widenumber'></TD></TR>
+    {% endif %}
+</table>
+<BR>
+<a class='button link' href='/notifications'>Close</a>
+<input class='button link' type='submit' value='Submit'>
+{% if notif_config.get("id") and notif_config.get("id") != 0 and index >= 0 %}
+<button type='button' class='button link' id='test-btn' onclick='testNotification({{ index }})'>Test</button>
+{% endif %}
+</form>
+{% if notif_config.get("id") and notif_config.get("id") != 0 and index >= 0 %}
+<form method='POST' action='/api/notification/{{ index }}/delete' style='display:inline'>
+    <input type='submit' class='button link wide red' value='Delete' onclick='return confirm("Delete this notification?")'>
+</form>
+{% endif %}
+{% endblock %}

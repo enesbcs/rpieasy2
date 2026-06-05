@@ -1,0 +1,15 @@
+# Core (always required)
+aiohttp>=3.9
+aiohttp-jinja2>=1.6
+jinja2>=3.1
+pyserial>=3.5
+aiomqtt>=2.2
+aiohttp-sse>=2.2
+psutil>=5.9
+
+# Optional hardware backends (install only what you need):
+#   lgpio           - native RPi GPIO (recommended on Raspberry Pi)
+#   smbus2          - I2C bus access
+#   spidev          - SPI bus access
+#   rpi-ws281x      - NeoPixel / WS281x LED strip (P038)
+#   pyftdi          - FTDI USB adapter support

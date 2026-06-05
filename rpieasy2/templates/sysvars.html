@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block content %}
+<form>
+<table class='normal'>
+    <TR><TH colspan='3'>System Variables</TH></TR>
+    {% for category, vars in sysvars.items() %}
+    <TR><TD colspan='3'><H3>{{ category }}</H3></TD></TR>
+    <TR><TH>Variable</TH><TH>Value</TH><TH>URL encoded</TH></TR>
+    {% for var, val in vars.items() %}
+    <TR>
+        <TD>{{ var }}</TD>
+        <TD>{{ val }}</TD>
+        <TD>{{ val|urlencode }}</TD>
+    </TR>
+    {% endfor %}
+    {% endfor %}
+</table>
+</form>
+{% endblock %}

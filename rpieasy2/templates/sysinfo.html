@@ -1,0 +1,87 @@
+{% extends "base.html" %}
+{% block content %}
+<form>
+<table class='normal'>
+    <TR><TH style='width:300px;'>System Info</TH><TH></TH></TR>
+    <TR><TD>Unit Number:</TD><TD>{{ sysinfo.unit }}</TD></TR>
+    <TR><TD>Local Time:</TD><TD>{{ sysinfo.localtime }}</TD></TR>
+    <TR><TD>Uptime:</TD><TD>{{ sysinfo.uptime }}</TD></TR>
+    <TR><TD>Load:</TD><TD>{{ sysinfo.load }}</TD></TR>
+    <TR><TD>Internal Temperature:</TD><TD>{{ sysinfo.cpu_temp }}</TD></TR>
+    <TR><TD>Free RAM:</TD><TD>{{ sysinfo.free_ram }}</TD></TR>
+    <TR><TD>IP Address:</TD><TD>{{ sysinfo.ip }}</TD></TR>
+    <TR><TD>RSSI:</TD><TD>{{ sysinfo.rssi }}</TD></TR>
+</table>
+<BR>
+<table class='normal'>
+    <TR><TH colspan='2'>Memory</TH></TR>
+    <TR><TD>Total RAM:</TD><TD>{{ sysinfo.total_ram }}</TD></TR>
+    <TR><TD>Used RAM:</TD><TD>{{ sysinfo.used_ram }}</TD></TR>
+    <TR><TD>Free RAM:</TD><TD>{{ sysinfo.free_ram }}</TD></TR>
+</table>
+<BR>
+<table class='normal'>
+    <TR><TH colspan='2'>Network</TH></TR>
+    <TR><TD>IP Address:</TD><TD>{{ sysinfo.ip }}</TD></TR>
+    <TR><TD>Hostname:</TD><TD>{{ sysinfo.hostname }}</TD></TR>
+    <TR><TD>RSSI:</TD><TD>{{ sysinfo.rssi }}</TD></TR>
+</table>
+<BR>
+<table class='normal'>
+    <TR><TH colspan='2'>Firmware</TH></TR>
+    <TR><TD>Build:</TD><TD>{{ sysinfo.version }}</TD></TR>
+    <TR><TD>Python:</TD><TD>{{ sysinfo.python }}</TD></TR>
+    <TR><TD>Platform:</TD><TD>{{ sysinfo.platform }}</TD></TR>
+</table>
+<BR>
+<table class='normal'>
+    <TR><TH colspan='2'>Hardware</TH></TR>
+    <TR><TD>CPU:</TD><TD>{{ sysinfo.cpu_model }}</TD></TR>
+    <TR><TD>CPU Cores:</TD><TD>{{ sysinfo.cpu_cores }}</TD></TR>
+    {% if sysinfo.rpi_model %}
+    <TR><TD>RPi Model:</TD><TD>{{ sysinfo.rpi_model }}</TD></TR>
+    {% endif %}
+    {% if sysinfo.board_vendor %}
+    <TR><TD>Board Vendor:</TD><TD>{{ sysinfo.board_vendor }}</TD></TR>
+    {% endif %}
+    {% if sysinfo.board_name %}
+    <TR><TD>Board Name:</TD><TD>{{ sysinfo.board_name }}</TD></TR>
+    {% endif %}
+</table>
+<BR>
+{% if sysinfo.os_name %}
+<table class='normal'>
+    <TR><TH colspan='2'>Operating System</TH></TR>
+    <TR><TD>OS Name:</TD><TD>{{ sysinfo.os_name }}</TD></TR>
+    <TR><TD>OS Version:</TD><TD>{{ sysinfo.os_version }}</TD></TR>
+    <TR><TD>Kernel:</TD><TD>{{ sysinfo.kernel }}</TD></TR>
+</table>
+<BR>
+{% endif %}
+{% if sysinfo.storage %}
+<table class='normal'>
+    <TR><TH colspan='2'>Storage (/)</TH></TR>
+    <TR><TD>Total:</TD><TD>{{ sysinfo.storage.total_hr }}</TD></TR>
+    <TR><TD>Used:</TD><TD>{{ sysinfo.storage.used_hr }}</TD></TR>
+    <TR><TD>Free:</TD><TD>{{ sysinfo.storage.free_hr }}</TD></TR>
+    <TR><TD>Usage:</TD><TD>{{ sysinfo.storage.percent }}</TD></TR>
+</table>
+<BR>
+{% endif %}
+{% if sysinfo.partitions %}
+<table class='normal'>
+    <TR><TH colspan='3'>Partitions</TH></TR>
+    <TR><TH>Mount</TH><TH>Total</TH><TH>Used</TH><TH>Free</TH><TH>Usage</TH></TR>
+    {% for part in sysinfo.partitions %}
+    <TR>
+        <TD>{{ part.mount }}</TD>
+        <TD>{{ part.total_hr }}</TD>
+        <TD>{{ part.used_hr }}</TD>
+        <TD>{{ part.free_hr }}</TD>
+        <TD>{{ part.percent }}</TD>
+    </TR>
+    {% endfor %}
+</table>
+{% endif %}
+</form>
+{% endblock %}

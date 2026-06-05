@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block content %}
+<form name='frmselect' method='post'>
+<table class='multirow even' border='1px' frame='box' rules='all'>
+    <TR><TH style='width:70px;'></TH><TH style='width:50px;'>Nr</TH><TH style='width:100px;'>Enabled</TH><TH>Service</TH><TH>Server</TH><TH>Port</TH></TR>
+    {% for slot in range(3) %}
+    {% set notif = config.notifications[slot] if slot < config.notifications|length and config.notifications[slot].get("id") is not none else None %}
+    <TR>
+        {% if notif %}
+        <TD><a class='button link' href='/notifications?index={{ slot }}'>Edit</a></TD>
+        <TD>{{ slot + 1 }}</TD>
+        <TD><span class='{{ "on" if notif.get("enabled") else "off" }}'>{{ "enabled" if notif.get("enabled") else "disabled" }}</span></TD>
+        <TD>{{ notif.get("name", "") }}</TD>
+        <TD>{{ notif.get("server", "") }}</TD>
+        <TD>{{ notif.get("port", "") }}</TD>
+        {% else %}
+        <TD><a class='button link' href='/notifications?index={{ slot }}'>Edit</a></TD>
+        <TD>{{ slot + 1 }}</TD>
+        <TD></TD><TD></TD><TD></TD><TD></TD>
+        {% endif %}
+    </TR>
+    {% endfor %}
+</table>
+</form>
+{% endblock %}

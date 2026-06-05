@@ -1,0 +1,416 @@
+{% extends "base.html" %}
+{% block content %}
+<form id='hardware-form' method='POST'>
+<table class='normal'>
+    <TR><TH colspan='2'>Hardware Configuration</TH></TR>
+    <TR><TH colspan='2' style='background:#555;'>Drivers</TH></TR>
+    {% macro driver_row(name, pkg, note) %}
+    <TR><TD nowrap>{{ name }}</TD><TD>
+    {%- set d = drivers.get(pkg, {}) %}
+    {%- if d.available %}
+        <span style='color:green;'>{{ pkg }} ok</span>
+        {%- if d.note %} <span class='note' title='{{ d.note }}'>&#9888;</span>{% endif %}
+    {%- else %}
+        <span style='color:red;'>{{ pkg }} missing</span>
+        <a href='#' class='install-dep' data-pkg='{{ pkg }}' style='color:red;text-decoration:underline;cursor:pointer;'>install</a>
+        <span class='install-status' style='margin-left:5px;'></span>
+    {%- endif %}
+    {%- if note %} <span class='note'>{{ note }}</span>{% endif %}
+    </TD></TR>
+    {% endmacro %}
+    {% if is_rpi %}
+    {{ driver_row("GPIO Driver", "lgpio", "(recommended on Raspberry Pi)") }}
+    {{ driver_row("I2C Driver", "smbus2", "") }}
+    {{ driver_row("SPI Driver", "spidev", "") }}
+    {% else %}
+    {{ driver_row("FTDI Support", "pyftdi", "(for USB GPIO adapters)") }}
+    {% endif %}
+    {% if is_rpi %}
+    <TR><TD colspan='2'><hr></TD></TR>
+    <TR><TH colspan='2' style='background:#555;'>Interface Enable ({{ boot_config_path }})</TH></TR>
+    <TR><TD colspan='2'>Changes take effect after reboot.</TD></TR>
+    <TR><TD nowrap>I2C1 (GPIO 2-3):</TD><TD nowrap>
+        <label class='container'><input type='checkbox' name='i2c_arm' value='1'{{ ' checked' if boot_config.get("i2c_arm") else '' }}><span class='checkmark'></span></label>
+        <span class='note'>(dtparam=i2c_arm)</span>
+    </TD></TR>
+    <TR><TD nowrap>SPI0 (GPIO 7-11):</TD><TD nowrap>
+        <label class='container'><input type='checkbox' name='spi' value='1'{{ ' checked' if boot_config.get("spi") else '' }}><span class='checkmark'></span></label>
+        <span class='note'>(dtparam=spi)</span>
+    </TD></TR>
+    <TR><TD nowrap>SPI1 (GPIO 16-19):</TD><TD nowrap>
+        <label class='container'><input type='checkbox' name='spi1' value='1'{{ ' checked' if boot_config.get("spi1") else '' }}><span class='checkmark'></span></label>
+        <span class='note'>(dtoverlay=spi1-1cs)</span>
+    </TD></TR>
+    <TR><TD nowrap>UART0 (GPIO 14-15):</TD><TD nowrap>
+        <label class='container'><input type='checkbox' name='uart' value='1'{{ ' checked' if boot_config.get("uart") else '' }}><span class='checkmark'></span></label>
+        <span class='note'>(enable_uart)</span>
+    </TD></TR>
+    <TR><TD nowrap>PWM (GPIO 12,13,18,19):</TD><TD nowrap>
+        <label class='container'><input type='checkbox' name='pwm' value='1'{{ ' checked' if boot_config.get("pwm") else '' }}><span class='checkmark'></span></label>
+        <span class='note'>(dtoverlay=pwm-2chan)</span>
+    </TD></TR>
+    {% endif %}
+</table>
+<BR>
+{% if is_rpi %}
+<table class='normal'>
+    <TR><TH colspan='3'>GPIO Boot State (gpio= in config.txt)</TH></TR>
+    <TR><TH>GPIO</TH><TH>Mode</TH><TH>Setting</TH></TR>
+    {% for gpio in usable_gpios %}
+    {% set is_special = gpio in special_pins %}
+    <TR{{ ' style="background:#ffdcdc;"' if is_special else '' }}>
+        <TD>GPIO {{ gpio }}{% if is_special %} <span class='note'>(special)</span>{% endif %}</TD>
+        <TD>
+            <select name='gpio_{{ gpio }}' style='width:160px;'{{ ' disabled' if is_special else '' }}>
+                <option value=''{{ ' selected' if is_special or not boot_gpio_config.get(gpio) else '' }}>Disabled</option>
+                <option value='1WIRE'{{ ' selected' if not is_special and boot_gpio_config.get(gpio) == '1WIRE' else '' }}>1-Wire (dtoverlay)</option>
+                <option value='op,dl'{{ ' selected' if not is_special and boot_gpio_config.get(gpio) == 'op,dl' else '' }}>Output Low (op,dl)</option>
+                <option value='op,dh'{{ ' selected' if not is_special and boot_gpio_config.get(gpio) == 'op,dh' else '' }}>Output High (op,dh)</option>
+                <option value='ip,pu'{{ ' selected' if not is_special and boot_gpio_config.get(gpio) == 'ip,pu' else '' }}>Input Pull-Up (ip,pu)</option>
+                <option value='ip,pd'{{ ' selected' if not is_special and boot_gpio_config.get(gpio) == 'ip,pd' else '' }}>Input Pull-Down (ip,pd)</option>
+                <option value='ip,np'{{ ' selected' if not is_special and boot_gpio_config.get(gpio) == 'ip,np' else '' }}>Input Floating (ip,np)</option>
+            </select>
+        </TD>
+        <TD class='note'>{% if is_special %}Reserved for special function{% else %}{{ {'1WIRE':'1-Wire (dtoverlay)','op,dl':'Drive Low at boot','op,dh':'Drive High at boot','ip,pu':'Pull-Up at boot','ip,pd':'Pull-Down at boot','ip,np':'Floating at boot'}.get(boot_gpio_config.get(gpio, ''), 'Not configured') }}{% endif %}</TD>
+    </TR>
+    {% endfor %}
+    {% if need_password %}
+    <TR><TH colspan='3' style='background:#c0392b;'>Sudo Password Required</TH></TR>
+    <TR><TD colspan='2'>Password:</TD><TD><input type='password' name='password' required style='width:200px;'></TD></TR>
+    {% endif %}
+</table>
+<BR>
+<button type='submit' class='button'>Save</button>
+<a class='button link' href='/hardware'>Cancel</a>
+{% else %}
+<div id='ftdi_section'>
+<h3>FTDI Devices</h3>
+<div id='ftdi_status'>Scanning for FTDI devices...</div>
+</div>
+<div style='margin-top:10px;'>
+<button type='button' class='button' id='ftdi_save_btn' onclick='saveFtdiConfig()' style='display:none;'>Save FTDI Configuration</button>
+<span id='ftdi_save_status'></span>
+</div>
+{% endif %}
+</form>
+{% if result %}<p>{{ result }}</p>{% endif %}
+
+<script>
+function computeReserved(mpsseChannels, portWidth) {
+    var reserved = [];
+    var base = 0;
+    for (var ci = 0; ci < mpsseChannels.length; ci++) {
+        var mode = mpsseChannels[ci];
+        if (mode === 'i2c') {
+            for (var p = base; p < base + 3 && p < base + portWidth; p++) reserved.push(p);
+        } else if (mode === 'spi') {
+            for (var p = base; p < base + 4 && p < base + portWidth; p++) reserved.push(p);
+        }
+        base += portWidth;
+    }
+    return reserved;
+}
+
+function buildFtdiDeviceUI(dev, savedConfig, globalOffset) {
+    var container = document.createElement('div');
+    container.className = 'ftdi-device';
+    container.dataset.globalOffset = globalOffset || 0;
+    container.style.cssText = 'border:1px solid #555;border-radius:5px;padding:10px;margin-bottom:10px;background:#222;';
+
+    var portW = dev.port_width || 16;
+    var hasMpsse = dev.has_mpsse || false;
+
+    var savedMpsse = [];
+    var savedGpio = {};
+    var savedI2cFreq = 100000;
+    var savedSpiFreq = 6000000;
+    if (savedConfig) {
+        var matchById = dev.device_id && savedConfig.device_id && dev.device_id === savedConfig.device_id;
+        var matchByUrl = savedConfig.url === dev.url;
+        if (matchById || matchByUrl) {
+            savedMpsse = savedConfig.mpsse_channels || [];
+            savedGpio = savedConfig.gpio_pins || {};
+            savedI2cFreq = parseInt(savedConfig.i2c_frequency) || 100000;
+            savedSpiFreq = parseInt(savedConfig.spi_frequency) || 6000000;
+        }
+    }
+    if (savedMpsse.length === 0) savedMpsse.push(null);
+    var mpsseCh = savedMpsse.slice();
+
+    var header = document.createElement('div');
+    header.innerHTML = '<strong>' + (dev.description || 'FTDI Device') + '</strong>'
+        + ' <span class="note">(' + dev.url + ')</span>'
+        + (dev.device_id ? '<br><span class="note">ID: ' + dev.device_id + '</span>' : '')
+        + '<br><span class="note">Port Width: ' + portW + ' pins'
+        + (hasMpsse ? ', MPSSE capable' : '') + '</span>';
+    container.appendChild(header);
+
+    if (hasMpsse) {
+        var chDiv = document.createElement('div');
+        chDiv.style.cssText = 'margin-top:8px;';
+        chDiv.innerHTML = '<strong>MPSSE Mode:</strong> ';
+        var sel = document.createElement('select');
+        sel.style.cssText = 'background:#1e1e1e;color:#ddd;border:1px solid #555;padding:2px 4px;';
+        var opts = [
+            {v: '', l: 'None'},
+            {v: 'i2c', l: 'I2C'},
+            {v: 'spi', l: 'SPI'},
+        ];
+        for (var oi = 0; oi < opts.length; oi++) {
+            var opt = document.createElement('option');
+            opt.value = opts[oi].v;
+            opt.textContent = opts[oi].l;
+            if (opts[oi].v === (mpsseCh[0] || '')) opt.selected = true;
+            sel.appendChild(opt);
+        }
+        sel.className = 'ftdi-mpsse-sel';
+        var freqDiv = document.createElement('div');
+        freqDiv.style.cssText = 'margin-top:4px;';
+        var i2cFreqDiv = document.createElement('div');
+        i2cFreqDiv.style.cssText = 'display:' + ((mpsseCh[0] || '') === 'i2c' ? 'block' : 'none') + ';';
+        i2cFreqDiv.innerHTML = '<strong>I2C Frequency:</strong> ';
+        var i2cFreqSel = document.createElement('select');
+        i2cFreqSel.className = 'ftdi-i2c-freq';
+        i2cFreqSel.style.cssText = 'background:#1e1e1e;color:#ddd;border:1px solid #555;padding:2px 4px;';
+        var i2cFreqOpts = [
+            {v: 100000, l: '100 kHz (Standard)'},
+            {v: 400000, l: '400 kHz (Fast)'},
+            {v: 1000000, l: '1 MHz (Fast Plus)'},
+        ];
+        for (var fi = 0; fi < i2cFreqOpts.length; fi++) {
+            var fo = document.createElement('option');
+            fo.value = i2cFreqOpts[fi].v;
+            fo.textContent = i2cFreqOpts[fi].l;
+            if (i2cFreqOpts[fi].v === savedI2cFreq) fo.selected = true;
+            i2cFreqSel.appendChild(fo);
+        }
+        i2cFreqDiv.appendChild(i2cFreqSel);
+        var spiFreqDiv = document.createElement('div');
+        spiFreqDiv.style.cssText = 'display:' + ((mpsseCh[0] || '') === 'spi' ? 'block' : 'none') + ';';
+        spiFreqDiv.innerHTML = '<strong>SPI Frequency:</strong> ';
+        var spiFreqSel = document.createElement('select');
+        spiFreqSel.className = 'ftdi-spi-freq';
+        spiFreqSel.style.cssText = 'background:#1e1e1e;color:#ddd;border:1px solid #555;padding:2px 4px;';
+        var spiFreqOpts = [
+            {v: 100000, l: '100 kHz'},
+            {v: 1000000, l: '1 MHz'},
+            {v: 6000000, l: '6 MHz (Default)'},
+            {v: 12000000, l: '12 MHz'},
+        ];
+        for (var fi = 0; fi < spiFreqOpts.length; fi++) {
+            var fo = document.createElement('option');
+            fo.value = spiFreqOpts[fi].v;
+            fo.textContent = spiFreqOpts[fi].l;
+            if (spiFreqOpts[fi].v === savedSpiFreq) fo.selected = true;
+            spiFreqSel.appendChild(fo);
+        }
+        spiFreqDiv.appendChild(spiFreqSel);
+        sel.addEventListener('change', function() {
+            mpsseCh[0] = this.value || null;
+            i2cFreqDiv.style.display = (this.value === 'i2c') ? 'block' : 'none';
+            spiFreqDiv.style.display = (this.value === 'spi') ? 'block' : 'none';
+            updateReservedAndPins();
+        });
+        chDiv.appendChild(sel);
+        chDiv.appendChild(freqDiv);
+        freqDiv.appendChild(i2cFreqDiv);
+        freqDiv.appendChild(spiFreqDiv);
+        container.appendChild(chDiv);
+    }
+
+    var pinDiv = document.createElement('div');
+    pinDiv.style.cssText = 'margin-top:8px;';
+    pinDiv.innerHTML = '<strong>GPIO Configuration:</strong><br>';
+    var pinTable = document.createElement('div');
+    pinTable.id = 'pins_' + dev.url.replace(/[^a-zA-Z0-9]/g, '_');
+    pinDiv.appendChild(pinTable);
+    container.appendChild(pinDiv);
+
+    function updateReservedAndPins() {
+        var reserved = computeReserved(mpsseCh, portW);
+        var offset = parseInt(container.dataset.globalOffset || '0');
+        var html = '<table class="normal" style="width:auto;margin-top:4px;"><tr><th>Virt.</th><th>Pin</th><th>Direction</th></tr>';
+        for (var p = 0; p < portW; p++) {
+            var isReserved = reserved.indexOf(p) >= 0;
+            var savedDir = savedGpio[p.toString()] || 'input';
+            html += '<tr' + (isReserved ? ' style="background:#3a3a3a;color:#888;"' : '') + '>'
+                + '<td style="text-align:center;">' + (offset + p) + '</td>'
+                + '<td>' + (isReserved ? '<span title="Reserved by MPSSE">GPIO ' + p + ' &#128274;</span>' : 'GPIO ' + p) + '</td>'
+                + '<td>';
+            if (isReserved) {
+                html += '<span class="note">reserved</span>';
+            } else {
+                html += '<select data-pin="' + p + '" data-devurl="' + dev.url + '" class="ftdi-gpio-sel" style="background:#1e1e1e;color:#ddd;border:1px solid #555;padding:2px 4px;">'
+                    + '<option value="input"' + (savedDir === 'input' ? ' selected' : '') + '>Input</option>'
+                    + '<option value="output"' + (savedDir === 'output' ? ' selected' : '') + '>Output</option>'
+                    + '</select>';
+            }
+            html += '</td></tr>';
+        }
+        html += '</table>';
+        pinTable.innerHTML = html;
+    }
+    updateReservedAndPins();
+    return container;
+}
+
+function loadFtdiDevices() {
+    var status = document.getElementById('ftdi_status');
+    var section = document.getElementById('ftdi_section');
+    fetch('/api/ftdi/devices')
+        .then(function(r) { return r.json().then(function(data) { return {status: r.status, body: data}; }); })
+        .then(function(resp) {
+            if (resp.status !== 200 || !Array.isArray(resp.body)) {
+                status.innerHTML = '<span style="color:red;">Failed to scan: ' + (resp.body.error || 'unknown error') + '</span>';
+                return;
+            }
+            var devices = resp.body;
+            if (devices.length === 0) {
+                status.innerHTML = '<span style="color:#888;">No FTDI devices detected.</span>'
+                    + ' <button type="button" class="button link" onclick="fixFtdiPermissions()" style="font-size:12px;padding:2px 8px;">Fix permissions</button>'
+                    + ' <span id="ftdi_fix_status"></span>';
+                return;
+            }
+            status.innerHTML = '<span style="color:green;">' + devices.length + ' FTDI device(s) found.</span>';
+            var savedConfigs = {{ ftdi_devices | tojson }};
+            if (!Array.isArray(savedConfigs)) savedConfigs = [];
+            devices.sort(function(a, b) {
+                var ka = a.device_id || a.url || '';
+                var kb = b.device_id || b.url || '';
+                return ka < kb ? -1 : ka > kb ? 1 : 0;
+            });
+            savedConfigs.sort(function(a, b) {
+                var ka = a.device_id || a.url || '';
+                var kb = b.device_id || b.url || '';
+                return ka < kb ? -1 : ka > kb ? 1 : 0;
+            });
+            var cumOffset = 0;
+            for (var i = 0; i < devices.length; i++) {
+                var saved = null;
+                for (var si = 0; si < savedConfigs.length; si++) {
+                    var sc = savedConfigs[si];
+                    var matchById = devices[i].device_id && sc.device_id && devices[i].device_id === sc.device_id;
+                    var matchByUrl = sc.url === devices[i].url;
+                    if (matchById || matchByUrl) {
+                        saved = sc;
+                        break;
+                    }
+                }
+                var devInfo = saved || devices[i];
+                var pw = devInfo.port_width || 16;
+                var ui = buildFtdiDeviceUI(devices[i], saved, cumOffset);
+                section.appendChild(ui);
+                cumOffset += pw;
+            }
+            document.getElementById('ftdi_save_btn').style.display = 'inline-block';
+        })
+        .catch(function(err) {
+            status.innerHTML = '<span style="color:red;">Failed to scan: ' + err + '</span>';
+        });
+}
+
+function fixFtdiPermissions() {
+    var status = document.getElementById('ftdi_fix_status');
+    if (!status) return;
+    var pwd = prompt('Sudo password for creating FTDI udev rules:');
+    if (pwd === null) { status.innerHTML = ''; return; }
+    status.innerHTML = 'Applying...';
+    fetch('/api/ftdi/fix-permissions', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({password: pwd || ''})
+    })
+    .then(function(r) { return r.json().then(function(d) { return {status: r.status, body: d}; }); })
+    .then(function(resp) {
+        if (resp.status === 200) {
+            status.innerHTML = '<span style="color:green;">' + (resp.body.message || 'OK') + '</span>';
+        } else if (resp.body.error === 'NEED_PASSWORD') {
+            status.innerHTML = '<span style="color:red;">Incorrect password.</span>';
+            fixFtdiPermissions();
+        } else {
+            status.innerHTML = '<span style="color:red;">Failed: ' + (resp.body.error || 'unknown') + '</span>';
+        }
+    })
+    .catch(function(err) {
+        status.innerHTML = '<span style="color:red;">Error: ' + err + '</span>';
+    });
+}
+
+function saveFtdiConfig() {
+    var devices = document.querySelectorAll('.ftdi-device');
+    var configs = [];
+    for (var di = 0; di < devices.length; di++) {
+        var dev = devices[di];
+        var textParts = dev.querySelector('div:first-child').innerHTML.split('<br>');
+        var fullText = textParts.join('\n');
+        var headerLine = textParts[0] || '';
+        var urlMatch = fullText.match(/\(([^)]+)\)/);
+        var url = urlMatch ? urlMatch[1] : '';
+        var idMatch = fullText.match(/ID:\s*([a-f0-9]+)/);
+        var deviceId = idMatch ? idMatch[1] : '';
+        var desc = headerLine.replace(/<[^>]+>/g, '').trim().split(' (')[0];
+        var pwMatch = fullText.match(/Port Width:\s*(\d+)/);
+        var portWidth = pwMatch ? parseInt(pwMatch[1]) : 16;
+        var hasMpsse = fullText.indexOf('MPSSE') >= 0;
+        var mpsseSel = dev.querySelector('.ftdi-mpsse-sel');
+        var mpsseCh = mpsseSel ? [mpsseSel.value || null] : [];
+        var i2cFreqSel = dev.querySelector('.ftdi-i2c-freq');
+        var i2cFreq = i2cFreqSel ? parseInt(i2cFreqSel.value) : 100000;
+        var spiFreqSel = dev.querySelector('.ftdi-spi-freq');
+        var spiFreq = spiFreqSel ? parseInt(spiFreqSel.value) : 6000000;
+        var gpioPins = {};
+        var gpioSelects = dev.querySelectorAll('.ftdi-gpio-sel');
+        for (var gi = 0; gi < gpioSelects.length; gi++) {
+            var gs = gpioSelects[gi];
+            gpioPins[gs.dataset.pin] = gs.value;
+        }
+        var entry = {
+            url: url,
+            description: desc,
+            port_width: portWidth,
+            has_mpsse: hasMpsse,
+            mpsse_channels: mpsseCh,
+            gpio_pins: gpioPins,
+            i2c_frequency: i2cFreq,
+            spi_frequency: spiFreq,
+        };
+        if (deviceId) entry.device_id = deviceId;
+        configs.push(entry);
+    }
+    var status = document.getElementById('ftdi_save_status');
+    var btn = document.getElementById('ftdi_save_btn');
+    if (configs.length === 0) return;
+    btn.disabled = true;
+    status.innerHTML = 'Saving...';
+    fetch('/api/ftdi/config/bulk', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(configs)
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+        btn.disabled = false;
+        if (data.status === 'ok') {
+            status.innerHTML = '<span style="color:green;">Saved ' + data.count + ' device(s). Restart RPIEasy to apply.</span>';
+        } else {
+            status.innerHTML = '<span style="color:red;">Error: ' + (data.error || 'unknown') + '</span>';
+        }
+    })
+    .catch(function(err) {
+        btn.disabled = false;
+        status.innerHTML = '<span style="color:red;">Error: ' + err + '</span>';
+    });
+}
+document.addEventListener('DOMContentLoaded', function() {
+    {% if not is_rpi %}
+    if (document.getElementById('ftdi_section')) {
+        loadFtdiDevices();
+    }
+    {% endif %}
+});
+</script>
+
+<style>
+.ftdi-device select:hover { border-color: #7caea2; }
+</style>
+{% endblock %}

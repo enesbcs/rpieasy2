@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block content %}
+<table class='normal'>
+    <TR><TH colspan='6'>Pin States</TH></TR>
+    <TR>
+        <TH style='width:60px;'>GPIO</TH>
+        <TH style='width:80px;'>Available</TH>
+        <TH style='width:60px;'>Value</TH>
+        <TH>Special Function</TH>
+        <TH>Used By</TH>
+        <TH>Status</TH>
+    </TR>
+    {% for gpio in gpio_states %}
+    <TR style="{{ 'background:rgba(255,100,100,0.1);' if not gpio.available else ( 'background:rgba(255,255,100,0.1);' if gpio.in_use else '' ) }}">
+        <TD style='text-align:center;font-weight:bold;'>{{ gpio.pin }}</TD>
+        <TD style='text-align:center;'>
+            {% if gpio.available %}
+            <span style='color:green;'>&#10003;</span>
+            {% else %}
+            <span style='color:red;'>&#10007;</span>
+            {% endif %}
+        </TD>
+        <TD style='text-align:center;font-family:monospace;'>{{ gpio.value }}</TD>
+        <TD>{{ gpio.function }}</TD>
+        <TD>
+            {% for u in gpio.users %}
+            <div style='font-size:0.9em;'>#{{ u.task }} {{ u.plugin }}: {{ u.name }}</div>
+            {% else %}
+            <span style='color:gray;'>-</span>
+            {% endfor %}
+        </TD>
+        <TD>
+            {% if gpio.in_use %}
+            <span style='color:orange;'>In use</span>
+            {% elif gpio.available %}
+            <span style='color:gray;'>Free</span>
+            {% else %}
+            <span style='color:red;'>Not on header</span>
+            {% endif %}
+        </TD>
+    </TR>
+    {% endfor %}
+    <TR><TD colspan='6' style='text-align:right;'>
+        Total usable: <strong>{{ usable_count }}</strong> / {{ total_count }}
+    </TD></TR>
+</table>
+<BR>
+<a class='button link' href='/tools'>Back to Tools</a>
+{% endblock %}

@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block content %}
+<form>
+<table class='normal'>
+    <TR><TH colspan='2'>About RPIEasy</TH></TR>
+    <TR><TD>Version</TD><TD>1.0.0 (2026)</TD></TR>
+    <TR><TD>Description</TD><TD>Python 3 reimplementation of ESPEasy for Raspberry Pi.</TD></TR>
+    <TR><TD>Platform</TD><TD>aiohttp + asyncio + lgpio/smbus2/spidev</TD></TR>
+</table>
+<BR>
+<table class='normal'>
+    <TR><TH colspan='2'>Libraries</TH></TR>
+    <TR><TD>Web Server</TD><TD>aiohttp</TD></TR>
+    <TR><TD>GPIO / I2C / SPI</TD><TD>lgpio, smbus2, spidev</TD></TR>
+    <TR><TD>MQTT Client</TD><TD>aiomqtt</TD></TR>
+    <TR><TD>System Info</TD><TD>psutil</TD></TR>
+</table>
+</form>
+{% endblock %}

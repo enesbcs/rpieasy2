@@ -1,0 +1,179 @@
+{% extends "base.html" %}
+{% block content %}
+<form>
+<table class='normal'>
+    <TR><TH colspan='3'>Plugins sorted by Name</TH></TR>
+    <TR><TH>#</TH><TH>Name</TH><TH>Dependencies</TH></TR>
+    {% for p in plugins_by_name %}
+    <TR>
+        <TD>P{{ '%03d'|format(p.id) }}</TD>
+        <TD>
+            {{ p.display_name }}
+            <a class='button help' href='https://espeasy.readthedocs.io/en/latest/Plugin/P{{ '%03d'|format(p.id) }}.html' target='_blank' title='{{ p.name }} documentation'>i</a>
+        </TD>
+        <TD>
+            {% if p.missing %}
+            <span style='color:red;'>Missing:
+                {% for m in p.missing %}
+                <a href='#' class='install-dep' data-pkg='{{ m }}' style='color:red;text-decoration:underline;cursor:pointer;'>{{ m|replace("_", " ") }}</a>{% if not loop.last %}, {% endif %}
+                {% endfor %}
+            </span>
+            <span class='install-status' style='margin-left:5px;'></span>
+            {% elif p.warnings %}
+            <span style='color:orange;'>{{ p.deps|join(", ") }}</span>
+            <span class='install-status' style='margin-left:5px;' title='{{ p.warnings|join("; ") }}'>&#9888;</span>
+            {% elif p.deps %}
+            <span style='color:green;'>{{ p.deps|join(", ") }}</span>
+            {% else %}
+            <span style='color:gray;'>-</span>
+            {% endif %}
+        </TD>
+    </TR>
+    {% endfor %}
+</table>
+<BR>
+<table class='normal'>
+    <TR><TH colspan='3'>Plugins sorted by Plugin ID</TH></TR>
+    <TR><TH>#</TH><TH>Name</TH><TH>Dependencies</TH></TR>
+    {% for p in plugins_by_id %}
+    <TR>
+        <TD>P{{ '%03d'|format(p.id) }}</TD>
+        <TD>
+            {{ p.display_name }}
+            <a class='button help' href='https://espeasy.readthedocs.io/en/latest/Plugin/P{{ '%03d'|format(p.id) }}.html' target='_blank' title='{{ p.name }} documentation'>i</a>
+        </TD>
+        <TD>
+            {% if p.missing %}
+            <span style='color:red;'>Missing:
+                {% for m in p.missing %}
+                <a href='#' class='install-dep' data-pkg='{{ m }}' style='color:red;text-decoration:underline;cursor:pointer;'>{{ m|replace("_", " ") }}</a>{% if not loop.last %}, {% endif %}
+                {% endfor %}
+            </span>
+            <span class='install-status' style='margin-left:5px;'></span>
+            {% elif p.warnings %}
+            <span style='color:orange;'>{{ p.deps|join(", ") }}</span>
+            <span class='install-status' style='margin-left:5px;' title='{{ p.warnings|join("; ") }}'>&#9888;</span>
+            {% elif p.deps %}
+            <span style='color:green;'>{{ p.deps|join(", ") }}</span>
+            {% else %}
+            <span style='color:gray;'>-</span>
+            {% endif %}
+        </TD>
+    </TR>
+    {% endfor %}
+</table>
+<BR>
+<table class='normal'>
+    <TR><TH colspan='3'>Controllers</TH></TR>
+    <TR><TH>#</TH><TH>Name</TH><TH>Dependencies</TH></TR>
+    {% for c in controllers %}
+    <TR>
+        <TD>C{{ '%03d'|format(c.id) }}</TD>
+        <TD>
+            {{ c.name }}
+            <a class='button help' href='https://espeasy.readthedocs.io/en/latest/Controller/C{{ '%03d'|format(c.id) }}.html' target='_blank' title='{{ c.name }} documentation'>i</a>
+        </TD>
+        <TD>
+            {% if c.missing %}
+            <span style='color:red;'>Missing:
+                {% for m in c.missing %}
+                <a href='#' class='install-dep' data-pkg='{{ m }}' style='color:red;text-decoration:underline;cursor:pointer;'>{{ m|replace("_", " ") }}</a>{% if not loop.last %}, {% endif %}
+                {% endfor %}
+            </span>
+            <span class='install-status' style='margin-left:5px;'></span>
+            {% elif c.warnings %}
+            <span style='color:orange;'>{{ c.deps|join(", ") }}</span>
+            <span class='install-status' style='margin-left:5px;' title='{{ c.warnings|join("; ") }}'>&#9888;</span>
+            {% elif c.deps %}
+            <span style='color:green;'>{{ c.deps|join(", ") }}</span>
+            {% else %}
+            <span style='color:gray;'>-</span>
+            {% endif %}
+        </TD>
+    </TR>
+    {% endfor %}
+</table>
+<BR>
+<table class='normal'>
+    <TR><TH colspan='3'>Notifications</TH></TR>
+    <TR><TH>#</TH><TH>Name</TH><TH>Dependencies</TH></TR>
+    {% for n in notifiers %}
+    <TR>
+        <TD>N{{ '%03d'|format(n.id) }}</TD>
+        <TD>
+            {{ n.name }}
+            <a class='button help' href='https://espeasy.readthedocs.io/en/latest/Notify/N{{ '%03d'|format(n.id) }}.html' target='_blank' title='{{ n.name }} documentation'>i</a>
+        </TD>
+        <TD>
+            {% if n.missing %}
+            <span style='color:red;'>Missing:
+                {% for m in n.missing %}
+                <a href='#' class='install-dep' data-pkg='{{ m }}' style='color:red;text-decoration:underline;cursor:pointer;'>{{ m|replace("_", " ") }}</a>{% if not loop.last %}, {% endif %}
+                {% endfor %}
+            </span>
+            <span class='install-status' style='margin-left:5px;'></span>
+            {% elif n.warnings %}
+            <span style='color:orange;'>{{ n.deps|join(", ") }}</span>
+            <span class='install-status' style='margin-left:5px;' title='{{ n.warnings|join("; ") }}'>&#9888;</span>
+            {% elif n.deps %}
+            <span style='color:green;'>{{ n.deps|join(", ") }}</span>
+            {% else %}
+            <span style='color:gray;'>-</span>
+            {% endif %}
+        </TD>
+    </TR>
+    {% endfor %}
+</table>
+</form>
+
+<script>
+function doInstall(el, pkg, sudoPassword) {
+    var status = el.parentElement.nextElementSibling;
+    if (!status) status = el.closest('td').querySelector('.install-status');
+    status.innerHTML = 'Installing...';
+    el.style.pointerEvents = 'none';
+    var body = {package: pkg};
+    if (sudoPassword) body.sudo_password = sudoPassword;
+    fetch('/api/plugins/install', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(body)
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+        if (data.status === 'ok') {
+            var msg = data.message || '';
+            var note = '';
+            if (msg.indexOf('(') > 0) {
+                note = '<br><span style="color:orange;font-size:0.9em;">' + msg.substring(msg.indexOf('(')) + '</span>';
+                msg = msg.substring(0, msg.indexOf('('));
+            }
+            status.innerHTML = '<span style="color:green;">' + msg + '</span>' + note;
+            if (el.parentElement && !note) el.parentElement.innerHTML = '<span style="color:green;">' + pkg + '</span>';
+        } else if (data.need_sudo) {
+            var pw = prompt('Admin password required for:\nsudo apt-get install -y ' + data.pkgs.join(' '));
+            if (pw) {
+                el.style.pointerEvents = '';
+                doInstall(el, pkg, pw);
+            } else {
+                status.innerHTML = '<span style="color:orange;">Installation cancelled</span>';
+                el.style.pointerEvents = '';
+            }
+        } else {
+            status.innerHTML = '<span style="color:red;">Failed: ' + data.message + '</span>';
+            el.style.pointerEvents = '';
+        }
+    })
+    .catch(function(err) {
+        status.innerHTML = '<span style="color:red;">Error: ' + err + '</span>';
+        el.style.pointerEvents = '';
+    });
+}
+document.querySelectorAll('.install-dep').forEach(function(el) {
+    el.addEventListener('click', function(e) {
+        e.preventDefault();
+        doInstall(this, this.getAttribute('data-pkg'), '');
+    });
+});
+</script>
+{% endblock %}

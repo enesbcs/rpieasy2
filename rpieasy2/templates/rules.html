@@ -1,0 +1,681 @@
+{% extends "base.html" %}
+{% block content %}
+<script defer>
+var _rules = {{ rules_list | tojson }};
+var _currentIdx = 0;
+var _disableAC = {{ "true" if disable_auto_completion else "false" }};
+var _editor = null;
+
+var _suggestions = [
+    "on", "do", "endon", "if", "endif", "else", "elseif",
+    "TaskValueSet", "TaskValueSetAndRun", "TaskValueToggle",
+    "TaskValueSetDerived", "TaskValueSetPresentation",
+    "taskRun", "taskRunAt", "scheduleTaskRun",
+    "taskClear", "taskClearAll", "taskEnable", "taskDisable",
+    "let", "letstr", "inc", "dec", "logentry",
+    "gpio", "gpio_toggle", "gpio_pwm", "gpio_tone", "gpio_rtttl",
+    "gpio_monitor", "gpio_unmonitor", "gpio_status",
+    "gpio_mode", "gpio_moderange",
+    "publish", "publishr", "subscribe",
+    "timerSet", "timerSet_ms", "loopTimerSet", "loopTimerSet_ms",
+    "loopTimerSetAndRun", "loopTimerSetAndRun_ms",
+    "timerPause", "timerResume",
+    "SendToHTTP", "SendToUDP",
+    "notify", "event", "asyncEvent",
+    "config", "reboot", "restart",
+    "pulse", "longPulse", "longPulse_ms",
+    "delay", "play", "servo",
+    "factoryReset", "save", "load",
+    "name", "unit", "password", "clearPassword",
+    "build", "settings", "status", "executeRules",
+    "i2cscanner", "datetime", "dst", "timezone",
+    "%time%", "%systime%", "%unix_time%", "%uptime%",
+    "%sysname%", "%lcltime%", "%ip%",
+];
+
+var _keywords = [
+    "on", "do", "endon", "if", "endif", "else", "elseif",
+];
+
+function selectRule(idx) {
+    var ta = document.getElementById('rules_text');
+    if (idx !== _currentIdx) {
+        if (_currentIdx >= 0 && _currentIdx < _rules.length) {
+            _rules[_currentIdx].rules = ta.value;
+        }
+        _currentIdx = idx;
+    }
+    if (idx >= 0 && idx < _rules.length) {
+        ta.value = _rules[idx].rules || '';
+    } else {
+        ta.value = '';
+    }
+    updateCharCount();
+    updateTabHighlight();
+    if (_editor) _editor.refresh();
+}
+
+function updateTabHighlight() {
+    var tabs = document.querySelectorAll('.rule-tab');
+    for (var i = 0; i < tabs.length; i++) {
+        tabs[i].className = 'rule-tab' + (i == _currentIdx ? ' active' : '');
+    }
+}
+
+function updateCharCount() {
+    var ta = document.getElementById('rules_text');
+    var cnt = document.getElementById('char_count');
+    cnt.textContent = ta.value.length;
+}
+
+function saveRules() {
+    var ta = document.getElementById('rules_text');
+    if (_currentIdx >= 0 && _currentIdx < _rules.length) {
+        _rules[_currentIdx].rules = ta.value;
+    }
+    var btn = document.getElementById('save_btn');
+    btn.disabled = true;
+    btn.value = 'Saving...';
+    fetch('/api/rules', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(_rules)
+    }).then(function(r) { return r.json(); }).then(function(data) {
+        if (data.status === 'ok') {
+            btn.value = 'Saved!';
+            setTimeout(function() { location.reload(); }, 500);
+        } else {
+            alert('Save failed: ' + (data.message || 'unknown error'));
+            btn.disabled = false;
+            btn.value = 'Save Rules';
+        }
+    }).catch(function(err) {
+        alert('Save error: ' + err);
+        btn.disabled = false;
+        btn.value = 'Save Rules';
+    });
+}
+
+function fetchRulesState() {
+    fetch('/api/rules/state').then(function(r) { return r.json(); }).then(function(data) {
+        var html = '';
+        if (data.enabled) {
+            html += '<div style="color:#0a0;font-weight:bold;">Enabled</div>';
+        } else {
+            html += '<div style="color:#a00;font-weight:bold;">Disabled</div>';
+        }
+        html += '<h4>Variables</h4><table class="multirow" style="font-size:11px;">';
+        for (var k in data.vars) {
+            html += '<tr><td>' + k + '</td><td>' + data.vars[k] + '</td></tr>';
+        }
+        html += '</table>';
+        if (data.timers && Object.keys(data.timers).length > 0) {
+            html += '<h4>Active Timers</h4><table class="multirow" style="font-size:11px;">';
+            for (var k in data.timers) {
+                html += '<tr><td>Timer#' + k + '</td><td>' + data.timers[k] + 's</td></tr>';
+            }
+            html += '</table>';
+        }
+        document.getElementById('rules_state').innerHTML = html;
+    }).catch(function(e) { console.log(e); });
+    setTimeout(fetchRulesState, 3000);
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+    renderTabs();
+    if (_rules.length > 0) selectRule(0);
+    fetchRulesState();
+    if (!_disableAC) {
+        _editor = new RuleEditor('rules_text', 'rules_highlight');
+    }
+});
+
+function renderTabs() {
+    var container = document.getElementById('rule_tabs');
+    container.innerHTML = '';
+    var labels = ['Rules Set 1', 'Rules Set 2', 'Rules Set 3', 'Rules Set 4'];
+    for (var i = 0; i < 4; i++) {
+        var btn = document.createElement('button');
+        btn.className = 'rule-tab' + (i == _currentIdx ? ' active' : '');
+        btn.textContent = labels[i];
+        btn.type = 'button';
+        btn.onclick = function(idx) { return function() { selectRule(idx); }; }(i);
+        container.appendChild(btn);
+    }
+}
+
+function RuleEditor(textareaId, highlightId) {
+    var self = this;
+    self.ta = document.getElementById(textareaId);
+    self.hl = document.getElementById(highlightId);
+    self.dropdown = document.getElementById('autocomplete_dropdown');
+    self.sync = null;
+    self._acWord = '';
+    self._acCallback = null;
+
+            self.ta.addEventListener('input', function() {
+                updateCharCount();
+                self._highlight();
+                self._checkAutocomplete();
+            });
+            self.ta.addEventListener('scroll', function() {
+                self.hl.scrollTop = self.ta.scrollTop;
+                self.hl.scrollLeft = self.ta.scrollLeft;
+            });
+    self.ta.addEventListener('keydown', function(e) {
+        if (e.key === 'Tab' && self.dropdown.style.display === 'block') {
+            e.preventDefault();
+            self._acceptSuggestion();
+        }
+        if (e.key === 'Escape') {
+            self._hideDropdown();
+        }
+    });
+    self.ta.addEventListener('blur', function() {
+        setTimeout(function() { self._hideDropdown(); }, 200);
+    });
+
+    self._highlight();
+}
+
+RuleEditor.prototype._kw = _keywords;
+RuleEditor.prototype._sug = _suggestions;
+
+RuleEditor.prototype._escapeHtml = function(text) {
+    return text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+};
+
+RuleEditor.prototype._highlight = function() {
+    var text = this.ta.value;
+    var html = '';
+    var lines = text.split('\n');
+    var tags = ["on", "do", "endon"];
+    var pad = String(lines.length).length;
+    if (pad < 2) pad = 2;
+    for (var li = 0; li < lines.length; li++) {
+        var num = String(li + 1);
+        while (num.length < pad) num = ' ' + num;
+        html += '<span class="ln">' + num + '</span>';
+        var line = lines[li];
+        var j = 0;
+        while (j < line.length) {
+            if (line[j] === '/' && line[j+1] === '/') {
+                html += '<span class="syn-comment">' + this._escapeHtml(line.substring(j)) + '</span>';
+                j = line.length;
+                break;
+            }
+            if (line[j] === '%') {
+                var end = line.indexOf('%', j + 1);
+                if (end > j) {
+                    html += '<span class="syn-var">' + this._escapeHtml(line.substring(j, end + 1)) + '</span>';
+                    j = end + 1;
+                    continue;
+                }
+            }
+            if (line[j] === '[') {
+                var end = line.indexOf(']', j + 1);
+                if (end > j) {
+                    html += '<span class="syn-ref">' + this._escapeHtml(line.substring(j, end + 1)) + '</span>';
+                    j = end + 1;
+                    continue;
+                }
+            }
+            if (line[j] === '"') {
+                var end = j + 1;
+                while (end < line.length && line[end] !== '"') end++;
+                if (end < line.length) end++;
+                html += '<span class="syn-string">' + this._escapeHtml(line.substring(j, end)) + '</span>';
+                j = end;
+                continue;
+            }
+            if (/[+\-*=<>!]/.test(line[j]) && (j === 0 || /[\s()\[\]]/.test(line[j-1]) || /[+\-*=<>!]/.test(line[j-1]))) {
+                html += '<span class="syn-operator">' + this._escapeHtml(line[j]) + '</span>';
+                j++;
+                continue;
+            }
+            var word = '';
+            var k = j;
+            while (k < line.length && /[a-zA-Z_0-9#]/.test(line[k])) { word += line[k]; k++; }
+            if (word) {
+                if (tags.indexOf(word) >= 0) {
+                    html += '<span class="syn-tag">' + word + '</span>';
+                } else if (this._kw.indexOf(word) >= 0) {
+                    html += '<span class="syn-keyword">' + word + '</span>';
+                } else if (this._sug.indexOf(word) >= 0) {
+                    html += '<span class="syn-command">' + word + '</span>';
+                } else if (/^\d+\.?\d*$/.test(word)) {
+                    html += '<span class="syn-number">' + word + '</span>';
+                } else if (word.indexOf('#') > 0) {
+                    html += '<span class="syn-ref">' + this._escapeHtml(word) + '</span>';
+                } else {
+                    html += this._escapeHtml(word);
+                }
+                j = k;
+            } else {
+                html += this._escapeHtml(line[j]);
+                j++;
+            }
+        }
+        if (li < lines.length - 1) html += '\n';
+    }
+    this.hl.innerHTML = html;
+};
+
+RuleEditor.prototype._checkAutocomplete = function() {
+    var ta = this.ta;
+    var pos = ta.selectionStart;
+    var text = ta.value;
+    var before = text.substring(0, pos);
+    var match = before.match(/([\$a-zA-Z_%][a-zA-Z_0-9%]*)$/);
+    if (!match) { this._hideDropdown(); return; }
+    var word = match[1];
+    if (word.length < 1) { this._hideDropdown(); return; }
+    this._acWord = word;
+    var lower = word.toLowerCase();
+    var hits = [];
+    for (var i = 0; i < this._sug.length; i++) {
+        if (this._sug[i].toLowerCase().indexOf(lower) === 0 && this._sug[i] !== word) {
+            hits.push(this._sug[i]);
+        }
+    }
+    if (hits.length === 0) { this._hideDropdown(); return; }
+    hits.sort();
+    if (hits.length > 12) hits = hits.slice(0, 12);
+    this._showDropdown(hits, pos);
+};
+
+RuleEditor.prototype._showDropdown = function(items, cursorPos) {
+    var dd = this.dropdown;
+    var ta = this.ta;
+    dd.innerHTML = '';
+    var self = this;
+    for (var i = 0; i < items.length; i++) {
+        var div = document.createElement('div');
+        div.className = 'ac-item' + (i === 0 ? ' ac-selected' : '');
+        div.textContent = items[i];
+        div.onclick = (function(val) {
+            return function() { self._replaceWord(val); };
+        })(items[i]);
+        dd.appendChild(div);
+    }
+    dd.style.display = 'block';
+    var rect = ta.getBoundingClientRect();
+    var lineHeight = 18;
+    var text = ta.value.substring(0, cursorPos);
+    var lines = text.split('\n');
+    var row = lines.length;
+    var col = lines[lines.length - 1].length;
+    var scrollTop = ta.scrollTop;
+    var top = rect.top + (row * lineHeight) - scrollTop + lineHeight + 4;
+    var left = rect.left + (col * 7.8) + 8;
+    dd.style.top = Math.min(top, window.innerHeight - 250) + 'px';
+    dd.style.left = Math.min(left, window.innerWidth - 200) + 'px';
+    dd._selectedIdx = 0;
+    dd._items = items;
+    dd._onkeydown = function(e) {
+        if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            var sel = dd.querySelector('.ac-selected');
+            var next = sel ? sel.nextElementSibling : dd.firstChild;
+            if (next) { if (sel) sel.className = 'ac-item'; next.className = 'ac-item ac-selected'; }
+        } else if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            var sel = dd.querySelector('.ac-selected');
+            var prev = sel ? sel.previousElementSibling : null;
+            if (prev) { if (sel) sel.className = 'ac-item'; prev.className = 'ac-item ac-selected'; }
+        }
+    };
+    document.addEventListener('keydown', dd._onkeydown);
+};
+
+RuleEditor.prototype._hideDropdown = function() {
+    var dd = this.dropdown;
+    dd.style.display = 'none';
+    dd.innerHTML = '';
+    if (dd._onkeydown) {
+        document.removeEventListener('keydown', dd._onkeydown);
+        dd._onkeydown = null;
+    }
+};
+
+RuleEditor.prototype._acceptSuggestion = function() {
+    var dd = this.dropdown;
+    var sel = dd.querySelector('.ac-selected');
+    if (sel) {
+        this._replaceWord(sel.textContent);
+    }
+};
+
+RuleEditor.prototype._replaceWord = function(replacement) {
+    var ta = this.ta;
+    var pos = ta.selectionStart;
+    var text = ta.value;
+    var before = text.substring(0, pos);
+    var after = text.substring(pos);
+    var match = before.match(/([a-zA-Z_%][a-zA-Z_0-9%]*)$/);
+    if (!match) return;
+    var start = pos - match[1].length;
+    var newText = before.substring(0, start) + replacement + after;
+    ta.value = newText;
+    var newPos = start + replacement.length;
+    ta.setSelectionRange(newPos, newPos);
+    ta.focus();
+    this._highlight();
+    this._hideDropdown();
+    updateCharCount();
+};
+
+RuleEditor.prototype.refresh = function() {
+    this._highlight();
+};
+
+var _searchResults = [];
+var _searchIdx = -1;
+
+function openSearch() {
+    var dd = document.getElementById('search_dialog');
+    dd.style.display = 'block';
+    var inp = document.getElementById('search_input');
+    inp.value = '';
+    inp.focus();
+    _searchResults = [];
+    _searchIdx = -1;
+    document.getElementById('search_count').textContent = '';
+    clearSearchHighlights();
+}
+
+function closeSearch() {
+    document.getElementById('search_dialog').style.display = 'none';
+    clearSearchHighlights();
+}
+
+function clearSearchHighlights() {
+    if (_editor) {
+        _editor._highlight();
+    }
+}
+
+function doSearch() {
+    var query = document.getElementById('search_input').value;
+    _searchResults = [];
+    _searchIdx = -1;
+    document.getElementById('search_count').textContent = '';
+    if (!query) { if (_editor) _editor._highlight(); return; }
+    var ta = document.getElementById('rules_text');
+    var text = ta.value;
+    var lower = query.toLowerCase();
+    var idx = 0;
+    while (true) {
+        var pos = text.toLowerCase().indexOf(lower, idx);
+        if (pos < 0) break;
+        _searchResults.push(pos);
+        idx = pos + 1;
+    }
+    if (_searchResults.length > 0) {
+        _searchIdx = 0;
+        _goToSearchMatch(0);
+    }
+    document.getElementById('search_count').textContent = _searchResults.length > 0
+        ? (_searchIdx + 1) + '/' + _searchResults.length : '0';
+}
+
+function _goToSearchMatch(idx) {
+    var pos = _searchResults[idx];
+    var ta = document.getElementById('rules_text');
+    var len = document.getElementById('search_input').value.length;
+    ta.focus();
+    ta.setSelectionRange(pos, pos + len);
+    var lineNo = ta.value.substring(0, pos).split('\n').length;
+    var lineHeight = 18;
+    ta.scrollTop = Math.max(0, (lineNo - 1) * lineHeight - ta.clientHeight / 2);
+}
+
+function findNext() {
+    if (_searchResults.length === 0) return;
+    _searchIdx = (_searchIdx + 1) % _searchResults.length;
+    doSearch();
+}
+
+function findPrev() {
+    if (_searchResults.length === 0) return;
+    _searchIdx = (_searchIdx - 1 + _searchResults.length) % _searchResults.length;
+    doSearch();
+}
+
+function searchKeydown(e) {
+    if (e.key === 'Enter') {
+        e.preventDefault();
+        if (e.shiftKey) findPrev();
+        else findNext();
+    }
+    if (e.key === 'Escape') closeSearch();
+}
+
+function downloadRules() {
+    var ta = document.getElementById('rules_text');
+    var idx = _currentIdx >= 0 ? _currentIdx + 1 : 1;
+    var content = ta.value;
+    var blob = new Blob([content], {type: 'text/plain'});
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = 'ruleset' + idx + '.txt';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(function() { URL.revokeObjectURL(url); }, 1000);
+}
+
+function formatRules() {
+    var ta = document.getElementById('rules_text');
+    var lines = ta.value.split('\n');
+    var out = [];
+    var indent = 0;
+    for (var i = 0; i < lines.length; i++) {
+        var raw = lines[i];
+        var trimmed = raw.trim();
+        if (!trimmed) { out.push(''); continue; }
+        var kwLow = trimmed.toLowerCase();
+        if (kwLow === 'endon' || kwLow === 'endif' || kwLow === 'else' || kwLow.startsWith('elseif')) {
+            indent = Math.max(0, indent - 1);
+        }
+        var lineOut = '  '.repeat(indent) + trimmed;
+        out.push(lineOut);
+        if (kwLow.startsWith('on ') && kwLow.endsWith(' do')) {
+            indent++;
+        }
+        if (kwLow === 'if' || kwLow.startsWith('if ')) {
+            indent++;
+        }
+        if (kwLow === 'else' || kwLow.startsWith('elseif ')) {
+            indent++;
+        }
+        if (kwLow.startsWith('on ')) {
+            indent = 1;
+        }
+    }
+    ta.value = out.join('\n');
+    if (_editor) _editor.refresh();
+    updateCharCount();
+}
+</script>
+
+<style>
+.rule-tab {
+    padding: 6px 12px; margin: 2px; border: 1px solid #555;
+    background: #333; color: #ddd; cursor: pointer; border-radius: 4px 4px 0 0;
+    font-size: 12px;
+}
+.rule-tab.active { background: #4a4; color: #fff; border-color: #4a4; }
+.rule-tab:hover { background: #555; }
+.editor-container {
+    position: relative; width: 100%; height: 400px;
+    border: 1px solid #555; border-radius: 5px; overflow: hidden;
+    background: #1a1a2e;
+}
+.editor-container pre,
+.editor-container textarea {
+    margin: 0; padding: 8px; border: none; outline: none;
+    font: 13px/18px monospace; white-space: pre; overflow: auto;
+    position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+}
+.editor-container pre {
+    z-index: 1; background: #1a1a2e; color: #e8d1a7;
+    pointer-events: none; word-wrap: normal;
+}
+.editor-container textarea {
+    z-index: 2; background: transparent; color: transparent;
+    caret-color: #e8d1a7; resize: none;
+    padding-left: 56px;
+}
+.editor-container textarea::selection {
+    background: #80cbc433;
+}
+.ln {
+    display: inline-block; width: 40px; text-align: right;
+    margin-right: 8px; color: #667; user-select: none;
+}
+.syn-keyword { color: #ea6962; font-weight: bold; }
+.syn-tag { color: #a9b665; }
+.syn-command { color: #7caea2; }
+.syn-var { color: #d8a657; }
+.syn-ref { color: #89b482; }
+.syn-string { color: #d8a657; }
+.syn-number { color: #d2869b; }
+.syn-comment { color: #6c6c6c; font-style: italic; }
+.syn-operator { color: #DECB6B; }
+#autocomplete_dropdown {
+    display: none; position: fixed; z-index: 1000;
+    background: #252526; border: 1px solid #555;
+    max-height: 240px; overflow-y: auto; min-width: 180px;
+    font-family: monospace; font-size: 12px;
+}
+.ac-item { padding: 4px 8px; color: #ddd; cursor: pointer; }
+.ac-item:hover, .ac-selected { background: #094771; color: #fff; }
+#search_dialog {
+    display: none; position: absolute; top: 0; right: 0; z-index: 20;
+    background: #252526; border: 1px solid #555; border-radius: 4px;
+    padding: 8px; font-family: monospace; font-size: 12px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+}
+#search_dialog input[type="text"] {
+    width: 180px; background: #1e1e1e; color: #ddd; border: 1px solid #555;
+    padding: 4px 8px; font-size: 12px; outline: none;
+}
+#search_dialog button {
+    background: #094771; color: #fff; border: none; padding: 4px 8px;
+    cursor: pointer; margin-left: 2px; font-size: 12px;
+}
+#search_dialog .search-count {
+    color: #888; font-size: 11px; margin-left: 6px;
+}
+.search-highlight {
+    background: #ffe792 !important; color: #000 !important;
+}
+.search-active {
+    background: #ff9800 !important; color: #000 !important;
+}
+.editor-toolbar {
+    display: flex; gap: 4px; margin-bottom: 4px; align-items: center;
+}
+.editor-toolbar .button.help {
+    font-size: 14px; font-weight: bold; padding: 2px 8px;
+}
+#format_btn, #search_btn {
+    padding: 2px 8px; font-size: 12px; cursor: pointer;
+}
+</style>
+
+<form id='rules_form' method='post' action='/rules'>
+<input type='hidden' name='rules_json' id='rules_json' value=''>
+<div style='display:flex; gap:10px;'>
+<div style='flex:2;'>
+<table class='normal' style='width:100%;'>
+    <TR><TH colspan='2'>Rules</TH></TR>
+    <TR><TD colspan='2'>
+        <div style='display:flex; align-items:center; margin-bottom:4px;'>
+            <div id='rule_tabs' style='flex:1;'></div>
+            <div class='editor-toolbar'>
+                <a class='button help' href='https://espeasy.readthedocs.io/en/latest/Rules/Rules.html' target='_blank' title='Help'>i</a>
+                <button type='button' id='search_btn' class='button link' title='Search' onclick='openSearch()'>&#128270;</button>
+                <button type='button' id='format_btn' class='button link' title='Format' onclick='formatRules()'>Format</button>
+            </div>
+        </div>
+    </TD></TR>
+    <TR><TD colspan='2'>
+        {% if disable_auto_completion %}
+        <textarea id='rules_text' spellcheck='false' oninput='updateCharCount()'></textarea>
+        {% else %}
+        <div class='editor-container'>
+            <pre id='rules_highlight' aria-hidden='true'></pre>
+            <textarea id='rules_text' spellcheck='false' oninput='updateCharCount()'></textarea>
+        </div>
+        {% endif %}
+        <div id='autocomplete_dropdown'></div>
+        <div id='search_dialog'>
+            <input type='text' id='search_input' placeholder='Find...' oninput='doSearch()' onkeydown='searchKeydown(event)'>
+            <button type='button' onclick='findNext()'>▼</button>
+            <button type='button' onclick='findPrev()'>▲</button>
+            <span class='search-count' id='search_count'></span>
+            <button type='button' onclick='closeSearch()' style='margin-left:8px;background:#555;'>✕</button>
+        </div>
+    </TD></TR>
+    <TR><TD colspan='2'>
+        Current size: <span id='char_count'>0</span> characters
+    </TD></TR>
+    <TR><TD colspan='2'>
+        <input type='button' class='button link' value='Save Rules' id='save_btn' onclick='saveRules()'>
+        <a class='button link' href='#' id='download_link' onclick='downloadRules()'>Download to file</a>
+    </TD></TR>
+</table>
+</div>
+<div style='flex:1; min-width:250px;'>
+<table class='normal' style='width:100%;'>
+    <TR><TH>Rule Engine Status</TH></TR>
+    <TR><TD id='rules_state'>Loading...</TD></TR>
+</table>
+<br>
+<table class='normal' style='width:100%;'>
+    <TR><TH colspan='2'>Quick Reference</TH></TR>
+    <TR><TD colspan='2' style='font-size:11px;'>
+<pre style='white-space:pre-wrap;'>
+<b>Trigger:</b>
+on System#Boot do ... endon
+on taskname#valuename do ... endon
+on Clock#Time=HH:MM do ... endon
+on eventname do ... endon
+
+<b>Conditions:</b>
+if [task#val] = value
+if %var% > value
+if %var% != %othervar%
+
+<b>Commands:</b>
+event,&lt;name&gt;
+TaskValueSet,&lt;task&gt;,&lt;nr&gt;,&lt;val&gt;
+let,&lt;var&gt;,&lt;val&gt;
+inc,&lt;var&gt;[,&lt;amount&gt;]
+dec,&lt;var&gt;[,&lt;amount&gt;]
+logentry,&lt;msg&gt;
+gpio,&lt;pin&gt;,&lt;state&gt;
+timerSet,&lt;nr&gt;,&lt;sec&gt;
+SendToHTTP,&lt;host&gt;,&lt;port&gt;,&lt;path&gt;
+publish,&lt;topic&gt;,&lt;msg&gt;
+notify,&lt;idx&gt;,&lt;msg&gt;
+reboot
+
+<b>Variables:</b>
+%time% %systime% %unix_time%
+%uptime% %sysname%
+[taskname#valuename]
+$stringvar
+
+<b>Comments:</b>
+// comment text
+</pre>
+    </TD></TR>
+</table>
+</div>
+</div>
+</form>
+{% endblock %}

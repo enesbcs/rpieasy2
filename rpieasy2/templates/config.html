@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block content %}
+<form id='config-form'>
+<table class='normal'>
+    <TR><TH colspan='2'>System Configuration</TH></TR>
+    <TR><TD>Name:</TD><TD><input type='text' name='name' class='wide' value='{{ config.system.name }}'></TD></TR>
+    <TR><TD>Unit:</TD><TD><input type='number' name='unit' value='{{ config.system.unit }}'></TD></TR>
+    <TR><TD>Hostname:</TD><TD><span class='note'>hostname: RPiEasy-{{ config.system.unit }}</span></TD></TR>
+    <TR><TD>Append Unit to hostname:</TD><TD><label class='container'><input type='checkbox' name='append_unit_hostname'{{ ' checked' if config.system.get("append_unit_hostname") else '' }}><span class='checkmark'></span></label></TD></TR>
+    <TR><TD>Admin Password:</TD><TD><input type='password' name='admin_password' class='wide' value='{{ config.system.get("admin_password", "") }}'></TD></TR>
+</table>
+<button type='submit' class='button'>Save</button>
+</form>
+<script>
+document.getElementById('config-form').addEventListener('submit', async function(e) {
+    e.preventDefault();
+    const data = { system: {} };
+    const form = this;
+    for (const el of form.querySelectorAll('[name]')) {
+        if (el.type === 'checkbox') {
+            data.system[el.name] = el.checked;
+        } else if (el.type === 'number') {
+            data.system[el.name] = parseInt(el.value);
+        } else {
+            data.system[el.name] = el.value;
+        }
+    }
+    const resp = await fetch('/api/config', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(data)
+    });
+    if (resp.ok) alert('Configuration saved!');
+    else alert('Save failed!');
+});
+</script>
+{% endblock %}

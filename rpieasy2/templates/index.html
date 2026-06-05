@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block content %}
+<span class='message error'></span>
+<form>
+<table class='normal'>
+    <TR><TH style='width:300px;'>System Info</TH><TH></TH></TR>
+    <TR><TD>Unit Number:</TD><TD>{{ sysinfo.unit }}</TD></TR>
+    <TR><TD>Local Time:</TD><TD>{{ sysinfo.localtime }}</TD></TR>
+    <TR><TD>Time Source:</TD><TD>{{ sysinfo.timesource }}</TD></TR>
+    <TR><TD>Uptime:</TD><TD>{{ sysinfo.uptime }}</TD></TR>
+    <TR><TD>Load:</TD><TD>{{ sysinfo.load }}</TD></TR>
+    <TR><TD>Internal Temperature:</TD><TD>{{ sysinfo.cpu_temp }}</TD></TR>
+    <TR><TD>Free RAM:</TD><TD>{{ sysinfo.free_ram }}</TD></TR>
+    <TR><TD>IP Address:</TD><TD>{{ sysinfo.ip }}</TD></TR>
+    <TR><TD>RSSI:</TD><TD>{{ sysinfo.rssi }}</TD></TR>
+    <TR><TD></TD><TD><a class='button link' href='/sysinfo'>More info</a></TD></TR>
+</table>
+<BR>
+<table class='multirow even'>
+    <TR><TH>Node List</TH><TH>Name</TH><TH>Build</TH><TH>Type</TH><TH style='width:160px;'>IP</TH><TH>Load</TH><TH>Age (s)</TH></TR>
+    {% for node in nodes %}
+    <TR{{ ' class="highlight"' if loop.first else '' }}>
+        <TD>Unit {{ node.id }}</TD>
+        <TD>{{ node.name }}</TD>
+        <TD>{{ node.build }}</TD>
+        <TD>{{ node.type }}</TD>
+        <TD><a class='button link wide' href='http://{{ node.ip }}{% if node.web_port and node.web_port != 80 %}:{{ node.web_port }}{% endif %}'>{{ node.ip }}{% if node.web_port and node.web_port != 80 %}:{{ node.web_port }}{% endif %}</a></TD>
+        <TD>{{ node.load }}</TD>
+        <TD>{{ node.age }}</TD>
+    </TR>
+    {% else %}
+    <TR><TD colspan='7'>No nodes discovered.</TD></TR>
+    {% endfor %}
+</table>
+</form>
+{% endblock %}

@@ -1,0 +1,200 @@
+{% extends "base.html" %}
+{% block content %}
+<form name='frmselect' method='post'>
+<script>
+function dept_onchange(form) { form.submit(); }
+</script>
+<input type='hidden' name='index' value='{{ index + 1 }}'>
+<table class='normal'>
+    <TR><TH style='width:300px;'>Controller Settings</TH><TH></TH></TR>
+    <TR><TD>Protocol:</td><TD>
+    <select class='wide' name='protocol' id='protocol' onchange='return dept_onchange(frmselect)'>
+        <option value=0 {% if ctrl_config.get("id", 0) == 0 %}selected{% endif %}>- Standalone -</option>
+        {% for cid, info in controllers|dictsort %}
+        <option value='{{ cid }}' {% if ctrl_config.get("id") == cid %}selected{% endif %}>{{ info.name }}</option>
+        {% endfor %}
+    </select>
+    <tt title='Change will submit and reload page'>&#128260;</tt>
+    {% if ctrl_config.get("id") and ctrl_config.get("id") != 0 %}
+    <a class='button help' href='https://espeasy.readthedocs.io/en/latest/Controller/C{{ "%03d"|format(ctrl_config.get("id", 0)) }}.html' target='_blank'>i</a>
+    {% endif %}
+    </TD></TR>
+    {% if ctrl_config.get("id") and ctrl_config.get("id") != 0 %}
+    {% if not ctrl_flags.Custom %}
+    {% if ctrl_flags.usesHost %}
+    <TR id='tr_locatecontroller'><TD>Locate Controller:</td><TD>
+    <select class='wide' name='locatecontroller' id='locatecontroller' onchange='return dept_onchange(frmselect)'>
+        <option value=0 {% if ctrl_config.get("locatecontroller", 0)|int == 0 %}selected{% endif %}>Use IP address</option>
+        <option value=1 {% if ctrl_config.get("locatecontroller", 0)|int == 1 %}selected{% endif %}>Use Hostname</option>
+    </select>
+    <tt title='Change will submit and reload page'>&#128260;</tt>
+    </TD></TR>
+    <TR id='tr_controllerip'><TD>Controller IP:</td><TD>
+    <input class='wide' type='text' name='controllerip' value='{{ ctrl_config.get("controllerip", ctrl_config.get("host", "")) }}'>
+    </TD></TR>
+    {% endif %}
+    {% if ctrl_flags.usesPort %}
+    <TR id='tr_controllerport'><TD>Controller Port:</td><TD>
+    <input class='widenumber' type='number' name='controllerport' min=1 max=65535 value='{{ ctrl_config.get("controllerport") or ctrl_config.get("port") or ctrl_defaults.get("controllerport", 0) }}'>
+    </TD></TR>
+    {% endif %}
+    <TR id='tr_usetls'><TD>Use TLS:</td><TD>
+    <select class='wide' name='usetls' id='usetls' onchange='return dept_onchange(frmselect)'>
+        <option value=0 {% if ctrl_config.get("usetls", ctrl_config.get("mqtt_tls", 0))|int == 0 %}selected{% endif %}>No TLS</option>
+        <option value=15 {% if ctrl_config.get("usetls", ctrl_config.get("mqtt_tls", 0))|int == 15 %}selected{% endif %}>TLS No Checks (insecure)</option>
+    </select>
+    <tt title='Change will submit and reload page'>&#128260;</tt>
+    </TD></TR>
+    {% if ctrl_flags.usesMQTT %}
+    <TR><TD></td><TD> <div class='note'>Note: Default ports: MQTT: 1883 / MQTT TLS: 8883</div>
+    {% else %}
+    <TR><TD></td><TD> <div class='note'>Note: Default ports: HTTP: 80 / HTTPS: 443</div>
+    {% endif %}
+    {% if ctrl_flags.usesQueue %}
+    <TR><TD colspan=2><H3>Controller Queue</H3></TD></TR>
+    <TR id='tr_minimumsendinterval'><TD>Minimum Send Interval:</td><TD>
+    <input class='widenumber' type='number' name='minimumsendinterval' min=1 max=3600000 value='{{ ctrl_config.get("minimumsendinterval", ctrl_config.get("queue_min_interval", 1) * 1000) }}'> [ms]
+    </TD></TR>
+    <TR id='tr_maxqueuedepth'><TD>Max Queue Depth:</td><TD>
+    <input class='widenumber' type='number' name='maxqueuedepth' min=1 max=50 value='{{ ctrl_config.get("maxqueuedepth", ctrl_config.get("queue_max_depth", 10)) }}'>
+    </TD></TR>
+    <TR id='tr_maxretries'><TD>Max Retries:</td><TD>
+    <input class='widenumber' type='number' name='maxretries' min=1 max=10 value='{{ ctrl_config.get("maxretries", ctrl_config.get("queue_max_retries", 10)) }}'>
+    </TD></TR>
+    <TR id='tr_fullqueueaction'><TD>Full Queue Action:</td><TD>
+    <select class='wide' name='fullqueueaction'>
+        <option value=0 {% if ctrl_config.get("fullqueueaction", 0)|int == 0 %}selected{% endif %}>Ignore New</option>
+        <option value=1 {% if ctrl_config.get("fullqueueaction", 0)|int == 1 %}selected{% endif %}>Delete Oldest</option>
+    </select>
+    </TD></TR>
+    {% endif %}
+    {% if ctrl_flags.allowsExpire %}
+    <TR id='tr_allowexpire'><TD>Allow Expire:</td><TD>
+    <label class='container'>&nbsp;<input type='checkbox' name='allowexpire' {{ 'checked' if ctrl_config.get("allowexpire") else '' }}><span class='checkmark'></span></label>
+    </TD></TR>
+    {% endif %}
+    <TR id='tr_de-duplicate'><TD>De-duplicate:</td><TD>
+    <label class='container'>&nbsp;<input type='checkbox' name='de-duplicate' {{ 'checked' if ctrl_config.get("de-duplicate") else '' }}><span class='checkmark'></span></label>
+    </TD></TR>
+    {% if ctrl_flags.usesCheckReply %}
+    <TR id='tr_checkreply'><TD>Check Reply:</td><TD>
+    <select class='wide' name='checkreply'>
+        <option value=0 {% if ctrl_config.get("checkreply", 0)|int == 0 %}selected{% endif %}>Ignore Acknowledgement</option>
+        <option value=1 {% if ctrl_config.get("checkreply", 0)|int == 1 %}selected{% endif %}>Check Acknowledgement</option>
+    </select>
+    </TD></TR>
+    {% endif %}
+    {% if ctrl_flags.usesTimeout %}
+    <TR id='tr_clienttimeout'><TD>Client Timeout:</td><TD>
+    <input class='widenumber' type='number' name='clienttimeout' min=10 max=4000 value='{{ ctrl_config.get("clienttimeout", ctrl_config.get("timeout", 10) * 10) }}'> [ms]
+    </TD></TR>
+    <TR><TD></td><TD> <div class='note'>Note: Typical timeout: 100...300 msec for local host, >500 msec for internet hosts</div>
+    {% endif %}
+    {% if ctrl_flags.usesAccount or ctrl_flags.usesPassword %}
+    <TR><TD colspan=2><H3>Credentials</H3></TD></TR>
+    {% if ctrl_flags.usesExtCreds %}
+    <TR id='tr_useextendedcredentials'><TD>Use Extended Credentials:</td><TD>
+    <label class='container'>&nbsp;<input type='checkbox' name='useextendedcredentials' {{ 'checked' if ctrl_config.get("useextendedcredentials") else '' }}><span class='checkmark'></span></label>
+    </TD></TR>
+    {% endif %}
+    {% if ctrl_flags.usesAccount %}
+    <TR id='tr_controlleruser'><TD>Controller User:</td><TD>
+    <input class='wide' type='search' name='controlleruser' maxlength=25 value='{{ ctrl_config.get("controlleruser", ctrl_config.get("username", "")) }}'>
+    </TD></TR>
+    {% endif %}
+    {% if ctrl_flags.usesPassword %}
+    <TR id='tr_controllerpassword'><TD>Controller Password:</td><TD>
+    <input class='wide' type='password' name='controllerpassword' maxlength=63 value='{{ ctrl_config.get("controllerpassword", ctrl_config.get("password", "")) }}'>
+    </TD></TR>
+    {% endif %}
+    {% endif %}
+    {% if ctrl_flags.usesMQTT %}
+    <TR><TD colspan=2><H3>MQTT</H3></TD></TR>
+    <TR id='tr_controllerclientid'><TD>Controller Client ID:</td><TD>
+    <input class='wide' type='search' name='controllerclientid' maxlength=64 value='{{ ctrl_config.get("controllerclientid") or ctrl_config.get("client_id") or ctrl_defaults.get("controllerclientid", "") }}'>
+    </TD></TR>
+    <TR id='tr_uniqueclientidonreconnect'><TD>Unique Client ID on Reconnect:</td><TD>
+    <label class='container'>&nbsp;<input type='checkbox' name='uniqueclientidonreconnect' {{ 'checked' if ctrl_config.get("uniqueclientidonreconnect") else '' }}><span class='checkmark'></span></label>
+    </TD></TR>
+    <TR><TD>Current Client ID:</td><TD>{{ client_id_resolved }}</TD></TR>
+    <TR><TD></td><TD> <div class='note'>Note: Updated on load of this page</div>
+    <TR id='tr_publishretainflag'><TD>Publish Retain Flag:</td><TD>
+    <label class='container'>&nbsp;<input type='checkbox' name='publishretainflag' {{ 'checked' if ctrl_config.get("publishretainflag") else '' }}><span class='checkmark'></span></label>
+    </TD></TR>
+    <TR id='tr_controllersubscribe'><TD>Controller Subscribe:</td><TD>
+    <input class='wide' type='search' name='controllersubscribe' maxlength=128 value='{{ ctrl_config.get("controllersubscribe") or ctrl_config.get("subscribe_topic") or ctrl_defaults.get("controllersubscribe", "") }}'>
+    </TD></TR>
+    <TR id='tr_controllerpublish'><TD>Controller Publish:</td><TD>
+    <input class='wide' type='search' name='controllerpublish' maxlength=128 value='{{ ctrl_config.get("controllerpublish") or ctrl_config.get("topic") or ctrl_defaults.get("controllerpublish", "") }}'>
+    </TD></TR>
+    <TR id='tr_controllerlwttopic'><TD>Controller LWT Topic:</td><TD>
+    <input class='wide' type='search' name='controllerlwttopic' maxlength=128 value='{{ ctrl_config.get("controllerlwttopic", ctrl_config.get("lwt_topic", "")) }}'>
+    </TD></TR>
+    <TR id='tr_lwtconnectmessage'><TD>LWT Connect Message:</td><TD>
+    <input class='wide' type='search' name='lwtconnectmessage' maxlength=128 value='{{ ctrl_config.get("lwtconnectmessage", "") }}'>
+    </TD></TR>
+    <TR id='tr_lwtdisconnectmessage'><TD>LWT Disconnect Message:</td><TD>
+    <input class='wide' type='search' name='lwtdisconnectmessage' maxlength=128 value='{{ ctrl_config.get("lwtdisconnectmessage", "") }}'>
+    </TD></TR>
+    <TR id='tr_sendlwttobroker'><TD>Send LWT to broker:</td><TD>
+    <label class='container'>&nbsp;<input type='checkbox' name='sendlwttobroker' {{ 'checked' if ctrl_config.get("sendlwttobroker", True) else '' }}><span class='checkmark'></span></label>
+    </TD></TR>
+    <TR id='tr_willretain'><TD>Will Retain:</td><TD>
+    <label class='container'>&nbsp;<input type='checkbox' name='willretain' {{ 'checked' if ctrl_config.get("willretain", ctrl_config.get("lwt_retain", True)) else '' }}><span class='checkmark'></span></label>
+    </TD></TR>
+    <TR id='tr_cleansession'><TD>Clean Session:</td><TD>
+    <label class='container'>&nbsp;<input type='checkbox' name='cleansession' {{ 'checked' if ctrl_config.get("cleansession") else '' }}><span class='checkmark'></span></label>
+    </TD></TR>
+    <TR id='tr_keepalivetime'><TD>Keep Alive Time:</td><TD>
+    <input class='widenumber' type='number' name='keepalivetime' min=0 max=65535 value='{{ ctrl_config.get("keepalivetime", 60) }}'> [sec]
+    </TD></TR>
+    {% endif %}
+    {% if ctrl_flags.mqttAutoDiscover %}
+    <TR><TD colspan=2><H3>MQTT - Auto Discovery</H3></TD></TR>
+    <TR id='tr_enableautodiscovery'><TD>Enable Auto Discovery:</td><TD>
+    <label class='container'>&nbsp;<input type='checkbox' name='enableautodiscovery' {{ 'checked' if ctrl_config.get("enableautodiscovery", ctrl_config.get("discovery_enabled", False)) else '' }}><span class='checkmark'></span></label>
+    </TD></TR>
+    <TR id='tr_discoverytriggertopic'><TD>Discovery Trigger topic:</td><TD>
+    <input class='wide' type='search' name='discoverytriggertopic' maxlength=64 value='{{ ctrl_config.get("discoverytriggertopic", ctrl_defaults.get("discoverytriggertopic", "homeassistant/status")) }}'>
+    </TD></TR>
+    <TR id='tr_autodiscoverytopic'><TD>Auto Discovery topic:</td><TD>
+    <input class='wide' type='search' name='autodiscoverytopic' maxlength=103 value='{{ ctrl_config.get("autodiscoverytopic") or ctrl_config.get("discovery_prefix") or ctrl_defaults.get("autodiscoverytopic", "homeassistant/%devclass%/%unique_id%") }}'>
+    </TD></TR>
+    <TR id='tr_configsuffix'><TD>Config suffix:</td><TD>
+    <input class='wide' type='search' name='configsuffix' maxlength=24 value='{{ ctrl_config.get("configsuffix", "/config") }}'>
+    </TD></TR>
+    <TR id='tr_onlinemessage'><TD>Online message:</td><TD>
+    <input class='wide' type='search' name='onlinemessage' maxlength=24 value='{{ ctrl_config.get("onlinemessage", "online") }}'>
+    </TD></TR>
+    <TR id='tr_retaindiscovery'><TD>Retain Discovery:</td><TD>
+    <label class='container'>&nbsp;<input type='checkbox' name='retaindiscovery' {{ 'checked' if ctrl_config.get("retaindiscovery") else '' }}><span class='checkmark'></span></label>
+    </TD></TR>
+    {% endif %}
+    {% if ctrl_flags.usesMQTT %}
+    <TR><TD colspan=2><H3>Connection Status</H3></TD></TR>
+    <TR><TD>MQTT Client Connected:</td><TD>
+        {% if ctrl_runtime and ctrl_runtime.get('connected') %}
+            <span class='enabled on'>&#9989;</span>
+        {% else %}
+            <span class='enabled off'>&#10060;</span>
+        {% endif %}
+    </TD></TR>
+    <TR><TD>Last Error:</td><TD>{{ ctrl_runtime.get('last_error', '') if ctrl_runtime else '' }}</TD></TR>
+    {% endif %}
+    {% endif %}
+    <TR id='tr_controllerenabled'><TD>Enabled:</td><TD>
+    <label class='container'>&nbsp;<input type='checkbox' name='controllerenabled' {{ 'checked' if ctrl_config.get("controllerenabled", ctrl_config.get("enabled", True)) else '' }}><span class='checkmark'></span></label>
+    </TD></TR>
+    <TR><TD colspan='2'><hr></TD></TR>
+    {% endif %}
+</table>
+<BR>
+<a class='button link' href='/controllers'>Close</a>
+<input class='button link' type='submit' value='Submit'>
+</form>
+{% if ctrl_config.get("id") and ctrl_config.get("id") != 0 and index >= 0 %}
+<form method='POST' action='/api/controller/{{ index }}/delete' style='display:inline'>
+    <input type='submit' class='button link wide red' value='Delete' onclick='return confirm("Delete this controller?")'>
+</form>
+{% endif %}
+{% endblock %}
