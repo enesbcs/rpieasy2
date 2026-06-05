@@ -29,6 +29,11 @@ cd rpieasy2
 chmod +x install.sh
 ./install.sh
 ```
+OR
+
+```
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/enesbcs/rpieasy2/main/install.sh)"
+```
 
 The installer will:
 1. Install system dependencies (Python 3, venv)
