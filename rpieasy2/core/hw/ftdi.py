@@ -747,6 +747,23 @@ class FtdiI2CManager(I2CManager):
         buf = await asyncio.to_thread(port.read, 2)
         return buf[0] | (buf[1] << 8)
 
+    async def read_i2c_block_data16(self, addr: int, reg16: int, length: int) -> list[int]:
+        port = self._port(addr)
+        if port is None:
+            return [0] * length
+        reg_hi = (reg16 >> 8) & 0xFF
+        reg_lo = reg16 & 0xFF
+        await asyncio.to_thread(port.write, [reg_hi, reg_lo])
+        return await asyncio.to_thread(lambda: list(port.read(length)))
+
+    async def write_i2c_block_data16(self, addr: int, reg16: int, data: list[int]) -> None:
+        port = self._port(addr)
+        if port is None:
+            return
+        reg_hi = (reg16 >> 8) & 0xFF
+        reg_lo = reg16 & 0xFF
+        await asyncio.to_thread(port.write, [reg_hi, reg_lo] + data)
+
     async def probe(self, addr: int) -> bool:
         if not self._check():
             logger.debug("FTDI I2C probe(0x%02x): _check failed", addr)

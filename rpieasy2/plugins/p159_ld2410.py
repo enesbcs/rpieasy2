@@ -32,7 +32,7 @@ class P159LD2410(PluginBase):
     def __init__(self):
         super().__init__()
         self._config: dict[str, Any] = {}
-        self._serial = None
+        self._buf: bytearray = bytearray()
         self._presence: int = 0
         self._distance: int = 0
         self._moving_energy: int = 0
@@ -43,6 +43,10 @@ class P159LD2410(PluginBase):
         self._config = event.data.get("task_config", {})
         if not self._hw:
             return False
+        self._presence = 0
+        self._distance = 0
+        self._moving_energy = 0
+        self._stationary_energy = 0
         await self._setup_serial()
         return True
 
@@ -52,28 +56,25 @@ class P159LD2410(PluginBase):
 
     async def _setup_serial(self) -> None:
         try:
-            self._serial = self._hw.serial.open(
-                port=self._config.get("serial_port", "/dev/ttyAMA0"),
-                baudrate=int(self._config.get("baudrate") or 256000),
+            await self._hw.serial.open(
+                port=self._config.get("serial_port", "/dev/ttyAMA0") or "/dev/ttyAMA0",
+                baud=int(self._config.get("baudrate") or 256000),
                 timeout=0,
             )
         except Exception as e:
             logger.error("LD2410 serial open failed: %s", e)
-            self._serial = None
 
     async def _close_serial(self) -> None:
-        if self._serial:
-            try:
-                self._serial.close()
-            except Exception:
-                pass
-            self._serial = None
+        try:
+            await self._hw.serial.close()
+        except Exception:
+            pass
 
     async def on_plugin_fifty_per_second(self, event: Event) -> bool | None:
-        if not self._serial:
+        if not self._hw or not self._hw.serial or not self._hw.serial.is_open:
             return None
         try:
-            data = self._serial.read(256)
+            data = await self._hw.serial.read(256)
             if data:
                 self._buf.extend(data)
                 self._parse_frames()
@@ -121,8 +122,8 @@ class P159LD2410(PluginBase):
         if command.startswith("ld2410"):
             parts = command.split(",")
             if len(parts) > 1 and parts[1].strip() == "factoryreset":
-                if self._serial:
-                    self._serial.write(b"\xAA\xFF\xFF\x02\x00\xF1\xF8")
+                if self._hw and self._hw.serial and self._hw.serial.is_open:
+                    await self._hw.serial.write(b"\xAA\xFF\xFF\x02\x00\xF1\xF8")
                     await asyncio.sleep(0.1)
                 return True
         return False
@@ -141,11 +142,23 @@ class P159LD2410(PluginBase):
         return None
 
     async def on_plugin_webform_load(self, event: Event) -> bool | None:
-        event.data["form"] = [
-            {"name": "serial_port", "label": "Serial Port", "type": "text", "value": self._config.get("serial_port", "/dev/ttyAMA0")},
-            {"name": "baudrate", "label": "Baud Rate", "type": "number", "value": self._config.get("baudrate", 256000)},
-            {"name": "engineering_mode", "label": "Engineering mode", "type": "checkbox", "value": self._config.get("engineering_mode", False)},
-        ]
+        form = []
+        port = str(self._config.get("serial_port", "/dev/ttyAMA0"))
+        try:
+            import serial.tools.list_ports
+            ports_found = serial.tools.list_ports.comports()
+            port_options = [{"value": p.device, "label": p.device} for p in ports_found]
+            if not port_options:
+                port_options = [{"value": "", "label": "No serial ports found"}]
+            elif port and not any(p["value"] == port for p in port_options):
+                port_options.append({"value": port, "label": port})
+        except Exception:
+            port_options = [{"value": port or "", "label": port or "/dev/ttyAMA0"}]
+        form.append({"name": "serial_port", "label": "Serial Device", "type": "select",
+                     "value": port, "options": port_options})
+        form.append({"name": "baudrate", "label": "Baud Rate", "type": "number", "value": self._config.get("baudrate", 256000)})
+        form.append({"name": "engineering_mode", "label": "Engineering mode", "type": "checkbox", "value": self._config.get("engineering_mode", False)})
+        event.data["form"] = form
         return True
 
     async def on_plugin_webform_save(self, event: Event) -> bool | None:

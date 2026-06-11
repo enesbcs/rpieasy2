@@ -15,6 +15,10 @@ logger = logging.getLogger("rpieasy2.plugin.p049")
 CMD_READ_CO2 = b"\xFF\x01\x86\x00\x00\x00\x00\x00\x79"
 CMD_ABC_ON = b"\xFF\x01\x79\xA0\x00\x00\x00\x00\xE6"
 CMD_ABC_OFF = b"\xFF\x01\x79\x00\x00\x00\x00\x00\x86"
+CMD_CALIBRATE_ZERO = b"\xFF\x01\x87\x00\x00\x00\x00\x00\x78"
+CMD_RESET = b"\xFF\x01\x8D\x00\x00\x00\x00\x00\x72"
+CMD_RANGE_2000 = b"\xFF\x01\x99\x00\x00\x00\x07\xD0\x8F"
+CMD_RANGE_5000 = b"\xFF\x01\x99\x00\x00\x00\x13\x88\xCB"
 
 
 class P049MHZ19(PluginBase):
@@ -117,6 +121,18 @@ class P049MHZ19(PluginBase):
         if command == "abcenable":
             await self._send_cmd(CMD_ABC_ON)
             return True
+        if command == "mhzcalibratezero":
+            await self._send_cmd(CMD_CALIBRATE_ZERO)
+            return True
+        if command == "mhzreset":
+            await self._send_cmd(CMD_RESET)
+            return True
+        if command == "mhzmeasurementrange2000":
+            await self._send_cmd(CMD_RANGE_2000)
+            return True
+        if command == "mhzmeasurementrange5000":
+            await self._send_cmd(CMD_RANGE_5000)
+            return True
         return None
 
     async def on_plugin_get_device_value_names(self, event: Event) -> bool | None:
@@ -124,19 +140,31 @@ class P049MHZ19(PluginBase):
         return True
 
     async def on_plugin_webform_load(self, event: Event) -> bool | None:
-        event.data["form"] = [
-            {"name": "serial_port", "label": "Serial Port", "type": "text", "value": self._config.get("serial_port", "/dev/ttyAMA0")},
-            {"name": "rx_pin", "label": "Serial RX GPIO", "type": "number", "value": self._config.get("rx_pin", "")},
-            {"name": "tx_pin", "label": "Serial TX GPIO", "type": "number", "value": self._config.get("tx_pin", "")},
-            {"name": "abc_disabled", "label": "ABC Disabled", "type": "checkbox", "value": self._config.get("abc_disabled", False)},
-            {"name": "filter", "label": "Filter", "type": "select", "value": self._config.get("filter", 0), "options": [
-                {"value": 0, "label": "Skip Unstable"},
-                {"value": 1, "label": "Use Unstable"},
-                {"value": 2, "label": "Fast"},
-                {"value": 3, "label": "Medium"},
-                {"value": 4, "label": "Slow"},
-            ]},
-        ]
+        form = []
+        port = str(self._config.get("serial_port", "/dev/ttyAMA0"))
+        try:
+            import serial.tools.list_ports
+            ports_found = serial.tools.list_ports.comports()
+            port_options = [{"value": p.device, "label": p.device} for p in ports_found]
+            if not port_options:
+                port_options = [{"value": "", "label": "No serial ports found"}]
+            elif port and not any(p["value"] == port for p in port_options):
+                port_options.append({"value": port, "label": port})
+        except Exception:
+            port_options = [{"value": port or "", "label": port or "/dev/ttyAMA0"}]
+        form.append({"name": "serial_port", "label": "Serial Device", "type": "select",
+                     "value": port, "options": port_options})
+        form.append({"name": "rx_pin", "label": "Serial RX GPIO", "type": "number", "value": self._config.get("rx_pin", "")})
+        form.append({"name": "tx_pin", "label": "Serial TX GPIO", "type": "number", "value": self._config.get("tx_pin", "")})
+        form.append({"name": "abc_disabled", "label": "ABC Disabled", "type": "checkbox", "value": self._config.get("abc_disabled", False)})
+        form.append({"name": "filter", "label": "Filter", "type": "select", "value": self._config.get("filter", 0), "options": [
+            {"value": 0, "label": "Skip Unstable"},
+            {"value": 1, "label": "Use Unstable"},
+            {"value": 2, "label": "Fast"},
+            {"value": 3, "label": "Medium"},
+            {"value": 4, "label": "Slow"},
+        ]})
+        event.data["form"] = form
         return True
 
     async def on_plugin_webform_save(self, event: Event) -> bool | None:

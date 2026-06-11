@@ -37,21 +37,32 @@ class P037MQTTImport(PluginBase):
 
     async def on_plugin_init(self, event: Event) -> bool | None:
         self._config = event.data.get("task_config", {})
-        host = self._config.get("host", "127.0.0.1")
-        port = self._config.get("port", DEFAULT_MQTT_PORT)
-        topic = self._config.get("topic", "#")
-        user = self._config.get("username", "")
-        password = self._config.get("password", "")
+        host = self._config.get("host", "127.0.0.1") or "127.0.0.1"
+        try:
+            port = int(self._config.get("port", DEFAULT_MQTT_PORT))
+        except (ValueError, TypeError):
+            port = DEFAULT_MQTT_PORT
+        topic = self._config.get("topic", "#") or "#"
+        user = self._config.get("username", "") or ""
+        password = self._config.get("password", "") or ""
         try:
             self._client = aiomqtt.Client(hostname=host, port=port,
                                           username=user if user else None,
                                           password=password if password else None)
-            await self._client.connect()
+            await self._client.__aenter__()
             await self._client.subscribe(topic)
             asyncio.create_task(self._listen())
         except Exception as e:
             logger.error("MQTT Import init failed: %s", e)
             return False
+        return True
+
+    async def on_plugin_exit(self, event: Event) -> bool | None:
+        if self._client:
+            try:
+                await self._client.__aexit__(None, None, None)
+            except Exception:
+                pass
         return True
 
     async def on_plugin_set_defaults(self, event: Event) -> bool | None:

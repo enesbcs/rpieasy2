@@ -49,8 +49,14 @@ class P012LCD2004(PluginBase):
 
     async def on_plugin_init(self, event: Event) -> bool | None:
         self._config = event.data.get("task_config", {})
-        self._addr = self._config.get("address", LCD_ADDR)
-        self._button_pin = int(self._config.get("button_pin") or -1)
+        try:
+            self._addr = int(self._config.get("address", LCD_ADDR))
+        except (ValueError, TypeError):
+            self._addr = LCD_ADDR
+        try:
+            self._button_pin = int(self._config.get("button_pin") or -1)
+        except (ValueError, TypeError):
+            self._button_pin = -1
         if not self._hw:
             return False
         try:

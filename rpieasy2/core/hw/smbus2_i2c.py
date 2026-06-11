@@ -53,6 +53,29 @@ class Smbus2I2CManager(I2CManager):
     async def read_word_data(self, addr: int, reg: int) -> int:
         return await asyncio.to_thread(self._bus.read_word_data, addr, reg)
 
+    async def read_i2c_block_data16(self, addr: int, reg16: int, length: int) -> list[int]:
+        reg_hi = (reg16 >> 8) & 0xFF
+        reg_lo = reg16 & 0xFF
+        write_msg = smbus2.i2c_msg.write(addr, [reg_hi, reg_lo])
+        read_msg = smbus2.i2c_msg.read(addr, length)
+
+        def _do() -> list[int]:
+            self._bus.i2c_rdwr(write_msg, read_msg)
+            return list(read_msg)
+
+        return await asyncio.to_thread(_do)
+
+    async def write_i2c_block_data16(self, addr: int, reg16: int, data: list[int]) -> None:
+        reg_hi = (reg16 >> 8) & 0xFF
+        reg_lo = reg16 & 0xFF
+        payload = [reg_hi, reg_lo] + data
+        msg = smbus2.i2c_msg.write(addr, payload)
+
+        def _do() -> None:
+            self._bus.i2c_rdwr(msg)
+
+        await asyncio.to_thread(_do)
+
     async def probe(self, addr: int) -> bool:
         try:
             await asyncio.to_thread(self._bus.write_quick, addr)

@@ -71,7 +71,7 @@ class P101WakeOnLan(PluginBase):
     async def on_plugin_write(self, event: Event) -> bool | None:
         command = (event.string1 or "").strip().lower()
         parts = [p.strip() for p in command.split(",")]
-        if parts[0] in ("wakeonlan", self._config.get("task_name", "").lower()):
+        if parts[0] in ("wakeonlan", (self._config.get("task_name", "") or "").lower()):
             mac = parts[1] if len(parts) > 1 and parts[1] else self._mac
             ip = parts[2] if len(parts) > 2 and parts[2] else self._ip
             port = int(parts[3]) if len(parts) > 3 and parts[3] else self._port

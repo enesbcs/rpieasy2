@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime
 import logging
 import os
 import random
@@ -22,6 +23,26 @@ _START_TIME: float = time.time()
 def set_start_time(t: float) -> None:
     global _START_TIME
     _START_TIME = t
+
+
+def _get_lat() -> float | None:
+    v = get_config().data.get("system", {}).get("latitude")
+    if v is None:
+        return None
+    try:
+        return float(v)
+    except (ValueError, TypeError):
+        return None
+
+
+def _get_lon() -> float | None:
+    v = get_config().data.get("system", {}).get("longitude")
+    if v is None:
+        return None
+    try:
+        return float(v)
+    except (ValueError, TypeError):
+        return None
 
 
 def resolve_system_var(name: str) -> str:
@@ -155,6 +176,71 @@ def resolve_system_var(name: str) -> str:
         except Exception:
             pass
         return "-"
+    if n == "sunrise":
+        try:
+            from suntime import Sun
+            lat = _get_lat()
+            lon = _get_lon()
+            if lat is None or lon is None:
+                return "00:00"
+            s = Sun(lat, lon)
+            t = s.get_local_sunrise_time()
+            return t.strftime("%H:%M")
+        except Exception:
+            return "00:00"
+    if n == "sunset":
+        try:
+            from suntime import Sun
+            lat = _get_lat()
+            lon = _get_lon()
+            if lat is None or lon is None:
+                return "00:00"
+            s = Sun(lat, lon)
+            t = s.get_local_sunset_time()
+            return t.strftime("%H:%M")
+        except Exception:
+            return "00:00"
+    if n == "sun_altitude":
+        try:
+            from pysolar.solar import get_altitude
+            from pytz import reference
+            lat = _get_lat()
+            lon = _get_lon()
+            if lat is None or lon is None:
+                return "0"
+            loc = reference.LocalTimezone()
+            dt = datetime.datetime.now(loc)
+            return str(get_altitude(lat, lon, dt))
+        except Exception:
+            return "0"
+    if n == "sun_azimuth":
+        try:
+            from pysolar.solar import get_azimuth
+            from pytz import reference
+            lat = _get_lat()
+            lon = _get_lon()
+            if lat is None or lon is None:
+                return "0"
+            loc = reference.LocalTimezone()
+            dt = datetime.datetime.now(loc)
+            return str(get_azimuth(lat, lon, dt))
+        except Exception:
+            return "0"
+    if n == "sun_radiation":
+        try:
+            from pysolar.solar import get_altitude
+            from pysolar.radiation import get_radiation_direct
+            from pytz import reference
+            lat = _get_lat()
+            lon = _get_lon()
+            if lat is None or lon is None:
+                return "-1"
+            loc = reference.LocalTimezone()
+            dt = datetime.datetime.now(loc)
+            alt = get_altitude(lat, lon, dt)
+            return str(get_radiation_direct(dt, alt))
+        except Exception:
+            return "-1"
     return ""
 
 

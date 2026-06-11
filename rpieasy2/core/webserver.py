@@ -748,6 +748,15 @@ async def controllers_post(request: web.Request) -> web.Response:
         "onlinemessage": data.get("onlinemessage", "online"),
         "retaindiscovery": "retaindiscovery" in data,
     }
+    if ctrl_id == 11:
+        ctrl_data["httpmethod"] = data.get("httpmethod", "GET")
+        ctrl_data["httpuri"] = data.get("httpuri", "")
+        ctrl_data["httpheader"] = data.get("httpheader", "")
+        ctrl_data["httpbody"] = data.get("httpbody", "")
+        ctrl_data["sendbinary"] = "sendbinary" in data
+    if ctrl_id == 34:
+        ctrl_data["c034_dbtype"] = _safe_int(data.get("c034_dbtype", 0))
+        ctrl_data["c034_dbname"] = data.get("c034_dbname", "")
     cfg.set_controller(idx, ctrl_data)
     cfg.save()
     return web.HTTPFound("/controllers")
@@ -1741,6 +1750,9 @@ async def notifications_post(request: web.Request) -> web.Response:
         "recipients": data.get("recipients", ""),
         "tls": "tls" in data,
         "pin": _safe_int(data.get("pin", 0)) if data.get("pin") else 0,
+        "chatid": data.get("chatid", ""),
+        "fullurl": data.get("fullurl", ""),
+        "body": data.get("body", ""),
     }
     cfg.set_notification(idx, notif_data)
     cfg.save()
@@ -2325,6 +2337,12 @@ def _build_plugins_info(ftdi_active: bool = False) -> list[dict]:
             "values": getattr(cls, "PLUGIN_VALUES", 0) if cls else 0,
             "deps": ok, "missing": missing, "warnings": warnings,
         })
+    # CORE system dependencies
+    core_missing, core_warnings, core_ok = _check_deps(_KNOWN_DEPS.get("p000", []))
+    items.append({
+        "id": 0, "name": "CORE", "display_name": "CORE", "type": "plugin",
+        "values": 0, "deps": core_ok, "missing": core_missing, "warnings": core_warnings,
+    })
     for cid, info in sorted(_controller_info.items()):
         mod_key = f"c{cid:03d}"
         deps = _KNOWN_DEPS.get(mod_key, [])
@@ -2770,6 +2788,7 @@ def _build_gpio_list(cfg) -> list[dict]:
 
 
 _KNOWN_DEPS: dict[str, list[str]] = {
+    "p000": ["suntime", "pysolar"],
     "p001": ["lgpio"],
     "p003": ["lgpio"],
     "p004": [],
@@ -2826,9 +2845,15 @@ _KNOWN_DEPS: dict[str, list[str]] = {
     "p147": ["smbus2"],
     "p153": ["smbus2"],
     "p159": [],
+    "p512": [],
+    "p513": ["lgpio"],
+    "p514": [],
+    "p515": [],
+    "p516": [],
     "c002": ["aiomqtt"],
     "c005": ["aiomqtt"],
     "c006": ["aiomqtt"],
+    "c034": ["pymysql"],
     "n001": [],
     "n002": ["lgpio"],
 }

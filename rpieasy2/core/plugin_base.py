@@ -25,7 +25,7 @@ class PluginBase:
     def subscribe(self, task_index: int) -> None:
         self._task_index = task_index
         for et in ("PLUGIN_INIT", "PLUGIN_EXIT", "PLUGIN_READ", "PLUGIN_WRITE",
-                   "PLUGIN_ONCE_A_SECOND", "PLUGIN_TEN_PER_SECOND",
+                   "PLUGIN_ONCE_A_SECOND", "PLUGIN_TEN_PER_SECOND", "PLUGIN_FIFTY_PER_SECOND",
                    "PLUGIN_DEVICE_ADD",
                    "PLUGIN_GET_DEVICE_VALUE_NAMES", "PLUGIN_GET_DEVICEGPIONAMES",
                    "PLUGIN_GET_DEVICEVALUECOUNT", "PLUGIN_GET_DEVICEVTYPE",

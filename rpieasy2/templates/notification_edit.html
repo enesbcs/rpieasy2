@@ -46,6 +46,18 @@ async function testNotification(idx) {
     <TR><TD colspan='2'><hr></TD></TR>
     <TR><TH colspan='2' style='background:#555;'>GPIO / Buzzer Settings</TH></TR>
     <TR><TD>GPIO Pin</TD><TD><input type='number' name='pin' value='{{ notif_config.get("pin", "") }}' class='widenumber'></TD></TR>
+    {% if notif_config.get("id") == 6 %}
+    <TR><TD colspan='2'><hr></TD></TR>
+    <TR><TH colspan='2' style='background:#555;'>Telegram Settings</TH></TR>
+    <TR><TD>Chat ID</TD><TD><input type='text' name='chatid' value='{{ notif_config.get("chatid", "") }}' class='wide'></TD></TR>
+    <TR><TD>Body</TD><TD><textarea name='body' rows='5' class='wide'>{{ notif_config.get("body", "") }}</textarea></TD></TR>
+    {% endif %}
+    {% if notif_config.get("id") == 8 %}
+    <TR><TD colspan='2'><hr></TD></TR>
+    <TR><TH colspan='2' style='background:#555;'>MS Teams Settings</TH></TR>
+    <TR><TD>Webhook URL</TD><TD><input type='text' name='fullurl' value='{{ notif_config.get("fullurl", "") }}' class='wide'></TD></TR>
+    <TR><TD>Body</TD><TD><textarea name='body' rows='5' class='wide'>{{ notif_config.get("body", "") }}</textarea></TD></TR>
+    {% endif %}
     {% endif %}
 </table>
 <BR>

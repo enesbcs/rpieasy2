@@ -95,6 +95,12 @@ class I2CManager(ABC):
     async def read_word_data(self, addr: int, reg: int) -> int:
         ...
 
+    async def read_i2c_block_data16(self, addr: int, reg16: int, length: int) -> list[int]:
+        raise NotImplementedError
+
+    async def write_i2c_block_data16(self, addr: int, reg16: int, data: list[int]) -> None:
+        raise NotImplementedError
+
     @abstractmethod
     async def probe(self, addr: int) -> bool:
         ...

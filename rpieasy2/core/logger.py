@@ -1,5 +1,6 @@
 import collections
 import logging
+import socket
 import sys
 import time
 import traceback
@@ -7,7 +8,6 @@ import traceback
 from rpieasy2.core.rpiconst import LOG_BUFFER_MAXLEN, LOG_TTL
 
 _log_buffer = None
-
 
 _LOG_LEVEL_MAP = {
     0: "None",
@@ -25,6 +25,13 @@ _CUSTOM_TO_PYTHON_LEVEL: dict[int, int] = {
     4: logging.DEBUG,
 }
 
+_SYSLOG_SEVERITY: dict[int, int] = {
+    logging.ERROR: 3,
+    logging.WARNING: 4,
+    logging.INFO: 5,
+    logging.DEBUG: 7,
+}
+
 
 def _get_web_log_level() -> int:
     try:
@@ -33,6 +40,40 @@ def _get_web_log_level() -> int:
         return int(val)
     except Exception:
         return 2
+
+
+class SyslogHandler(logging.Handler):
+    def __init__(self):
+        super().__init__()
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            from rpieasy2.core.config import get_config
+            cfg = get_config().data.get("system", {})
+            ip = cfg.get("syslog_ip", "")
+            if not ip:
+                return
+            port = int(cfg.get("syslog_port", 514))
+            level = int(cfg.get("syslog_level", 0))
+            if level == 0:
+                return
+            min_python_level = _CUSTOM_TO_PYTHON_LEVEL.get(level, logging.INFO)
+            if record.levelno < min_python_level:
+                return
+            devicename = cfg.get("name", "RPIEasy")
+            facility = 0
+            severity = _SYSLOG_SEVERITY.get(record.levelno, 7)
+            prio = facility * 8 + severity
+            msg = record.getMessage()
+            lstr = f"<{prio}>RPIEasy {devicename}: {msg}"
+            data = lstr.encode("utf-8")
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            try:
+                s.sendto(data, (ip, port))
+            finally:
+                s.close()
+        except Exception:
+            self.handleError(record)
 
 
 class LogBuffer(logging.Handler):
@@ -94,6 +135,8 @@ def setup_logging(level: int = logging.INFO) -> None:
 
     _log_buffer = LogBuffer()
     root.addHandler(_log_buffer)
+
+    root.addHandler(SyslogHandler())
 
 
 def get_logger(name: str) -> logging.Logger:

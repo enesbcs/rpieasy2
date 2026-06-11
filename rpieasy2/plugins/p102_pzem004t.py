@@ -48,50 +48,53 @@ class P102PZEM(PluginBase):
     def __init__(self):
         super().__init__()
         self._config: dict[str, Any] = {}
-        self._serial = None
         self._addr: int = 0x01
         self._pzem_type: int = 0
         self._values: list[float] = [0.0] * 6
 
     async def on_plugin_init(self, event: Event) -> bool | None:
         self._config = event.data.get("task_config", {})
-        self._addr = int(self._config.get("address") or 1)
-        self._pzem_type = int(self._config.get("pzem_type") or 0)
+        try:
+            self._addr = int(self._config.get("address") or 1)
+        except (ValueError, TypeError):
+            self._addr = 1
+        try:
+            self._pzem_type = int(self._config.get("pzem_type") or 0)
+        except (ValueError, TypeError):
+            self._pzem_type = 0
         if not self._hw:
             return False
         await self._setup_serial()
         return True
 
     async def on_plugin_exit(self, event: Event) -> bool | None:
-        if self._serial:
+        if self._hw and self._hw.serial:
             try:
-                self._serial.close()
+                await self._hw.serial.close()
             except Exception:
                 pass
-            self._serial = None
         return True
 
     async def _setup_serial(self) -> None:
         try:
-            self._serial = self._hw.serial.open(
-                port=self._config.get("serial_port", "/dev/ttyAMA0"),
-                baudrate=int(self._config.get("baudrate") or 9600),
+            await self._hw.serial.open(
+                port=self._config.get("serial_port", "/dev/ttyAMA0") or "/dev/ttyAMA0",
+                baud=int(self._config.get("baudrate") or 9600),
                 timeout=1,
             )
         except Exception as e:
             logger.error("PZEM serial open failed: %s", e)
-            self._serial = None
 
     async def _modbus_read(self, addr: int, reg: int, count: int) -> list[int] | None:
-        if not self._serial:
+        if not self._hw or not self._hw.serial or not self._hw.serial.is_open:
             return None
         req = struct.pack(">BBHH", addr, PZEM_CMD_READ, reg, count)
         crc = _pzem_crc(req)
         req += struct.pack("<H", crc)
         try:
-            self._serial.write(req)
+            await self._hw.serial.write(req)
             await asyncio.sleep(0.2)
-            resp = self._serial.read(256)
+            resp = await self._hw.serial.read(256)
             if len(resp) < 5:
                 return None
             data_len = resp[2]
@@ -106,7 +109,7 @@ class P102PZEM(PluginBase):
         return None
 
     async def on_plugin_read(self, event: Event) -> bool | None:
-        if not self._serial:
+        if not self._hw or not self._hw.serial or not self._hw.serial.is_open:
             return False
         vals = await self._modbus_read(self._addr, 0x00, 10)
         if not vals:
@@ -137,10 +140,10 @@ class P102PZEM(PluginBase):
         if command.startswith("resetenergy"):
             parts = command.split(",")
             addr = int(parts[1]) if len(parts) > 1 else self._addr
-            if self._serial:
+            if self._hw and self._hw.serial and self._hw.serial.is_open:
                 req = struct.pack(">BBHH", addr, PZEM_CMD_RESET, 0x00, 0x00)
                 crc = _pzem_crc(req)
-                self._serial.write(req + struct.pack("<H", crc))
+                await self._hw.serial.write(req + struct.pack("<H", crc))
                 return True
         return False
 
@@ -156,15 +159,27 @@ class P102PZEM(PluginBase):
         return True
 
     async def on_plugin_webform_load(self, event: Event) -> bool | None:
-        event.data["form"] = [
-            {"name": "serial_port", "label": "Serial Port", "type": "text", "value": self._config.get("serial_port", "/dev/ttyAMA0")},
-            {"name": "baudrate", "label": "Baud Rate", "type": "number", "value": self._config.get("baudrate", 9600)},
-            {"name": "pzem_type", "label": "PZEM Model", "type": "select", "value": self._config.get("pzem_type", 0), "options": [
-                {"value": 0, "label": "PZEM-004Tv30 (AC)"},
-                {"value": 1, "label": "PZEM-017v1 (DC)"},
-            ]},
-            {"name": "address", "label": "Modbus Address", "type": "number", "value": self._config.get("address", 1)},
-        ]
+        form = []
+        port = str(self._config.get("serial_port", "/dev/ttyAMA0"))
+        try:
+            import serial.tools.list_ports
+            ports_found = serial.tools.list_ports.comports()
+            port_options = [{"value": p.device, "label": p.device} for p in ports_found]
+            if not port_options:
+                port_options = [{"value": "", "label": "No serial ports found"}]
+            elif port and not any(p["value"] == port for p in port_options):
+                port_options.append({"value": port, "label": port})
+        except Exception:
+            port_options = [{"value": port or "", "label": port or "/dev/ttyAMA0"}]
+        form.append({"name": "serial_port", "label": "Serial Device", "type": "select",
+                     "value": port, "options": port_options})
+        form.append({"name": "baudrate", "label": "Baud Rate", "type": "number", "value": self._config.get("baudrate", 9600)})
+        form.append({"name": "pzem_type", "label": "PZEM Model", "type": "select", "value": self._config.get("pzem_type", 0), "options": [
+            {"value": 0, "label": "PZEM-004Tv30 (AC)"},
+            {"value": 1, "label": "PZEM-017v1 (DC)"},
+        ]})
+        form.append({"name": "address", "label": "Modbus Address", "type": "number", "value": self._config.get("address", 1)})
+        event.data["form"] = form
         return True
 
     async def on_plugin_webform_load_output_selector(self, event: Event) -> bool | None:

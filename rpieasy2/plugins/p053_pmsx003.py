@@ -200,16 +200,28 @@ class P053PMSx003(PluginBase):
         return True
 
     async def on_plugin_webform_load(self, event: Event) -> bool | None:
-        event.data["form"] = [
-            {"name": "serial_port", "label": "Serial Port", "type": "text", "value": self._config.get("serial_port", "/dev/ttyAMA0")},
-            {"name": "baudrate", "label": "Baud Rate", "type": "number", "value": self._config.get("baudrate", 9600)},
-            {"name": "output_selector", "label": "Output Values", "type": "select", "value": self._config.get("output_selector", 0), "options": [
-                {"value": 0, "label": "Particles (PM1.0, PM2.5, PM10)"},
-            ]},
-            {"name": "rst_pin", "label": "RST Pin", "type": "number", "value": self._config.get("rst_pin", -1)},
-            {"name": "pwr_pin", "label": "SET/PWR Pin", "type": "number", "value": self._config.get("pwr_pin", -1)},
-            {"name": "wake_delay", "label": "Sensor init time after wake (sec)", "type": "number", "value": self._config.get("wake_delay", 0)},
-        ]
+        form = []
+        port = str(self._config.get("serial_port", "/dev/ttyAMA0"))
+        try:
+            import serial.tools.list_ports
+            ports_found = serial.tools.list_ports.comports()
+            port_options = [{"value": p.device, "label": p.device} for p in ports_found]
+            if not port_options:
+                port_options = [{"value": "", "label": "No serial ports found"}]
+            elif port and not any(p["value"] == port for p in port_options):
+                port_options.append({"value": port, "label": port})
+        except Exception:
+            port_options = [{"value": port or "", "label": port or "/dev/ttyAMA0"}]
+        form.append({"name": "serial_port", "label": "Serial Device", "type": "select",
+                     "value": port, "options": port_options})
+        form.append({"name": "baudrate", "label": "Baud Rate", "type": "number", "value": self._config.get("baudrate", 9600)})
+        form.append({"name": "output_selector", "label": "Output Values", "type": "select", "value": self._config.get("output_selector", 0), "options": [
+            {"value": 0, "label": "Particles (PM1.0, PM2.5, PM10)"},
+        ]})
+        form.append({"name": "rst_pin", "label": "RST Pin", "type": "number", "value": self._config.get("rst_pin", -1)})
+        form.append({"name": "pwr_pin", "label": "SET/PWR Pin", "type": "number", "value": self._config.get("pwr_pin", -1)})
+        form.append({"name": "wake_delay", "label": "Sensor init time after wake (sec)", "type": "number", "value": self._config.get("wake_delay", 0)})
+        event.data["form"] = form
         return True
 
     async def on_plugin_webform_save(self, event: Event) -> bool | None:

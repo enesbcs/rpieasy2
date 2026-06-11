@@ -100,6 +100,13 @@ class _StubI2C(I2CManager):
         self._log.warning("I2C not available (install smbus2)")
         return []
 
+    async def read_i2c_block_data16(self, addr: int, reg16: int, length: int) -> list[int]:
+        self._log.warning("I2C not available (install smbus2)")
+        return [0] * length
+
+    async def write_i2c_block_data16(self, addr: int, reg16: int, data: list[int]) -> None:
+        self._log.warning("I2C not available (install smbus2)")
+
     def set_frequency(self, freq_hz: int) -> None:
         pass
 
