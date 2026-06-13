@@ -45,9 +45,13 @@
         <label class='container'><input type='checkbox' name='uart' value='1'{{ ' checked' if boot_config.get("uart") else '' }}><span class='checkmark'></span></label>
         <span class='note'>(enable_uart)</span>
     </TD></TR>
+    <TR><TD nowrap>Audio (GPIO 12,13):</TD><TD nowrap>
+        <label class='container'><input type='checkbox' name='audio' value='1'{{ ' checked' if boot_config.get("audio") else '' }}><span class='checkmark'></span></label>
+        <span class='note'>(dtparam=audio) DISABLE for NeoPixel!</span>
+    </TD></TR>
     <TR><TD nowrap>PWM (GPIO 12,13,18,19):</TD><TD nowrap>
         <label class='container'><input type='checkbox' name='pwm' value='1'{{ ' checked' if boot_config.get("pwm") else '' }}><span class='checkmark'></span></label>
-        <span class='note'>(dtoverlay=pwm-2chan)</span>
+        <span class='note'>(dtoverlay=pwm-2chan) DISABLE for NeoPixel!</span>
     </TD></TR>
     {% endif %}
 </table>

@@ -59,6 +59,7 @@ DEVICE_TYPE_CUSTOM0 = 30
 DEVICE_TYPE_CUSTOM1 = 31
 DEVICE_TYPE_CUSTOM2 = 32
 DEVICE_TYPE_CUSTOM3 = 33
+DEVICE_TYPE_USB = 40
 DEVICE_TYPE_DUMMY = 99
 
 DEVICE_TYPE_CATEGORIES: dict[int, str] = {
@@ -76,6 +77,7 @@ DEVICE_TYPE_CATEGORIES: dict[int, str] = {
     DEVICE_TYPE_CUSTOM1: "Custom",
     DEVICE_TYPE_CUSTOM2: "Custom",
     DEVICE_TYPE_CUSTOM3: "Custom",
+    DEVICE_TYPE_USB: "USB HID",
     DEVICE_TYPE_DUMMY: "Internal",
 }
 
@@ -796,7 +798,7 @@ UOM_AH = 168
 # --- System / Default constants ---
 
 BUILD_EPOCH = datetime(1967, 4, 29)
-BUILD = 21586
+BUILD = 21595
 
 
 def build_to_date_str(build: int) -> str:

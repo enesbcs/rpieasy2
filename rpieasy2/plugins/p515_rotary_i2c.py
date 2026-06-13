@@ -211,7 +211,7 @@ class _SeesawNeopixel(_PixelBuf):
 
 class P515RotaryI2C(PluginBase):
     PLUGIN_ID = 515
-    PLUGIN_NAME = "I2C - Adafruit Rotary Encoder"
+    PLUGIN_NAME = "Input - Adafruit Rotary Encoder"
     PLUGIN_VALUES = 2
     I2C_ADDRESSES = [0x36, 0x37, 0x38, 0x39, 0x3A, 0x3B, 0x3C, 0x3D]
     DEVICE_PROPERTIES = DeviceProperties(

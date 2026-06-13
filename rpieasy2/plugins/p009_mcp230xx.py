@@ -68,6 +68,7 @@ class P009MCP230xx(PluginBase):
         self._bank: int = 0
         self._is_23008: bool = False
         self._int_pin: int = -1
+        self._last_value: int = -1
 
     async def _iodir_reg(self) -> int:
         return MCP23017_REG_IODIRA + self._bank if not self._is_23008 else MCP23008_REG_IODIR
@@ -109,12 +110,14 @@ class P009MCP230xx(PluginBase):
             self._hw.gpio.watch(self._int_pin, EDGE_BOTH, self._int_cb)
 
     def _int_cb(self, gpio: int, level: int, ts: int) -> None:
-        asyncio.ensure_future(self._on_int())
+        asyncio.ensure_future(self._on_int(level))
 
-    async def _on_int(self) -> None:
+    async def _on_int(self, level: int) -> None:
         try:
-            val = await self._hw.i2c.read_byte_data(self._i2c_addr, await self._gpio_reg())
-            cur = (val >> self._local_pin) & 1
+            cur = 1 if level else 0
+            if cur == self._last_value:
+                return
+            self._last_value = cur
             await get_event_bus().publish(Event(
                 type="PLUGIN_READ", task_index=self._task_index,
                 data={"values": {"State": cur}},
@@ -178,13 +181,8 @@ class P009MCP230xx(PluginBase):
         if not self._hw:
             return False
         try:
-            pin_mode = int(self._config.get("pin_mode", PIN_MODE_INPUT))
-            if pin_mode == PIN_MODE_OUTPUT:
-                gpio = await self._hw.i2c.read_byte_data(self._i2c_addr, await self._gpio_reg())
-                val = (gpio >> self._local_pin) & 1
-            else:
-                gpio = await self._hw.i2c.read_byte_data(self._i2c_addr, await self._gpio_reg())
-                val = (gpio >> self._local_pin) & 1
+            gpio = await self._hw.i2c.read_byte_data(self._i2c_addr, await self._gpio_reg())
+            val = (gpio >> self._local_pin) & 1
             event.data["values"] = {"State": val}
             return True
         except Exception as e:
@@ -193,20 +191,25 @@ class P009MCP230xx(PluginBase):
 
     async def on_plugin_write(self, event: Event) -> bool | None:
         command = event.data.get("command", "").strip().lower()
-        parts = command.split(",")
-        if not parts:
-            return False
-        cmd = parts[0]
-        if cmd == "mcpgpio" and len(parts) >= 3:
-            return await self._mcpgpio(parts[1], parts[2])
-        if cmd == "mcppulse" and len(parts) >= 3:
-            dur = parts[3] if len(parts) > 3 else "100"
-            return await self._mcppulse(parts[1], parts[2], dur)
+        if command:
+            parts = command.split(",")
+            cmd = parts[0]
+            if cmd == "mcpgpio" and len(parts) >= 3:
+                return await self._mcpgpio(parts[1], parts[2])
+            if cmd == "mcppulse" and len(parts) >= 3:
+                dur = parts[3] if len(parts) > 3 else "100"
+                return await self._mcppulse(parts[1], parts[2], dur)
         pin_mode = int(self._config.get("pin_mode", PIN_MODE_INPUT))
-        if pin_mode == PIN_MODE_OUTPUT:
+        if pin_mode != PIN_MODE_OUTPUT:
+            return False
+        values = event.data.get("values", {})
+        if values:
+            val = 1 if str(list(values.values())[0]).lower() in ("1", "on", "true") else 0
+        elif command in ("1", "on", "0", "off"):
             val = 1 if command in ("1", "on") else 0
-            return await self._write_output(val)
-        return False
+        else:
+            return False
+        return await self._write_output(val)
 
     async def _resolve_epin(self, epin: int) -> tuple[int, int] | None:
         pins_per = MCP23008_PINS if self._is_23008 else MCP23017_PINS
@@ -288,6 +291,7 @@ class P009MCP230xx(PluginBase):
             chip = int(self._config.get("chip_type", 0))
         except (ValueError, TypeError):
             chip = 0
+        max_pins = MCP23008_PINS if chip else MCP23017_PINS
         port_opts = []
         for i in range(max_pins):
             if chip:

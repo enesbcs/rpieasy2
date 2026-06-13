@@ -783,7 +783,7 @@ def _find_boot_config() -> str | None:
 
 
 def _read_boot_config() -> dict[str, bool | set[int]]:
-    result: dict[str, bool | set[int]] = {"i2c_arm": False, "spi": False, "spi1": False, "uart": False, "pwm": False, "w1_gpio": set()}
+    result: dict[str, bool | set[int]] = {"i2c_arm": False, "spi": False, "spi1": False, "uart": False, "pwm": False, "audio": False, "w1_gpio": set()}
     path = _find_boot_config()
     if not path:
         return result
@@ -799,6 +799,8 @@ def _read_boot_config() -> dict[str, bool | set[int]]:
                     result["spi1"] = True
                 elif line.startswith("enable_uart=1"):
                     result["uart"] = True
+                elif line.startswith("dtparam=audio=on"):
+                    result["audio"] = True
                 elif line.startswith("dtoverlay=pwm"):
                     result["pwm"] = True
                 elif line.startswith("dtoverlay=w1-gpio"):
@@ -853,6 +855,7 @@ def _write_boot_config(form_data: dict[str, str], password: str = "", force_disa
         "spi1": ("dtoverlay=spi1", lambda v: f"dtoverlay=spi1-1cs" if v else f"#dtoverlay=spi1-1cs (disabled)"),
         "uart": ("enable_uart=", lambda v: f"enable_uart={1 if v else 0}"),
         "pwm": ("dtoverlay=pwm", lambda v: f"dtoverlay=pwm-2chan" if v else f"#dtoverlay=pwm-2chan (disabled)"),
+        "audio": ("dtparam=audio=", lambda v: f"dtparam=audio={'on' if v else 'off'}"),
     }
     try:
         with open(path) as f:
@@ -1104,6 +1107,8 @@ async def hardware_page(request: web.Request) -> web.Response:
         special_pins.update({14, 15})
     if boot_config.get("pwm"):
         special_pins.update({12, 13, 18, 19})
+    if boot_config.get("audio"):
+        special_pins.update({12, 13})
     cfg = get_config()
     ftdi_devices = cfg.data.get("system", {}).get("ftdi_devices", [])
     return aiohttp_jinja2.render_template("hardware.html", request,
@@ -1131,6 +1136,8 @@ async def hardware_post(request: web.Request) -> web.Response:
         special_pins_write.update({14, 15})
     if "pwm" in data:
         special_pins_write.update({12, 13, 18, 19})
+    if "audio" in data:
+        special_pins_write.update({12, 13})
     result = _write_boot_config(data, password, force_disabled_pins=special_pins_write)
     boot_config = _read_boot_config()
     boot_gpio_config = _read_boot_gpio_config()
@@ -1150,6 +1157,8 @@ async def hardware_post(request: web.Request) -> web.Response:
         special_pins.update({14, 15})
     if boot_config.get("pwm"):
         special_pins.update({12, 13, 18, 19})
+    if boot_config.get("audio"):
+        special_pins.update({12, 13})
     cfg = get_config()
     ftdi_devices = cfg.data.get("system", {}).get("ftdi_devices", [])
     ctx = _ctx("Hardware", "hardware", boot_config=boot_config,
@@ -2675,6 +2684,15 @@ def _check_module(name: str) -> tuple[bool, str]:
             return True, "Package OK, but I2C is disabled (enable with raspi-config or dtparam=i2c_arm=on)"
         except Exception:
             return False, ""
+    if name == "rpi_ws281x":
+        try:
+            import rpi_ws281x  # noqa: F401
+        except Exception:
+            return False, ""
+        from rpieasy2.core.rpiconst import is_raspberry_pi
+        if not is_raspberry_pi():
+            return True, "Library only works on Raspberry Pi hardware"
+        return True, ""
     return True, ""
 
 
@@ -2850,6 +2868,8 @@ _KNOWN_DEPS: dict[str, list[str]] = {
     "p514": [],
     "p515": [],
     "p516": [],
+    "p517": ["hid"],
+    "p518": [],
     "c002": ["aiomqtt"],
     "c005": ["aiomqtt"],
     "c006": ["aiomqtt"],
