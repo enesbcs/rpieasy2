@@ -188,8 +188,15 @@ class P038NeoPixel(PluginBase):
             return False
 
     async def on_plugin_webform_load(self, event: Event) -> bool | None:
+        form: list[dict[str, Any]] = []
+        try:
+            import rpi_ws281x  # noqa: F401
+        except ImportError:
+            form.append({"name": "_dep_warning", "label": "⚠ Missing: rpi_ws281x. "
+                         f"<a href='/pluginlist' style='font-weight:bold;'>Install from plugin list →</a>",
+                         "type": "warning"})
         pin_opts = [{"value": p, "label": f"GPIO {p} (PWM{ch})"} for p, ch in sorted(PWM_PINS.items())]
-        event.data["form"] = [
+        form += [
             {
                 "name": "pin",
                 "label": "GPIO Pin (PWM-capable)",
@@ -210,6 +217,7 @@ class P038NeoPixel(PluginBase):
                 "value": self._config.get("brightness", 100),
             },
         ]
+        event.data["form"] = form
         return True
 
     async def on_plugin_webform_save(self, event: Event) -> bool | None:

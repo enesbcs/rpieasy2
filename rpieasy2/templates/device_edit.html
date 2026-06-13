@@ -34,6 +34,13 @@ function num_out_onchange(sel) {
     <TR><TD colspan='2'><H3>Device Settings</H3></TD></TR>
     {% if form_fields %}
     {% for field in form_fields %}
+    {% if field.type == 'warning' %}
+    <TR><TD colspan='2'>
+        <div style='background:#fff3cd;border:1px solid #ffc107;padding:8px;border-radius:4px;'>
+            {{ field.label | safe }}
+        </div>
+    </TD></TR>
+    {% else %}
     <TR>
         <TD>{{ field.label }}</TD>
         <TD>
@@ -52,6 +59,7 @@ function num_out_onchange(sel) {
             {% endif %}
         </TD>
     </TR>
+    {% endif %}
     {% endfor %}
     {% endif %}
     <TR><TD colspan='2'><H3>Output Configuration</H3></TD></TR>

@@ -111,6 +111,12 @@ class P518Temper(PluginBase):
 
     async def on_plugin_webform_load(self, event: Event) -> bool | None:
         form = []
+        import os
+        udev_file = "/etc/udev/rules.d/99-temper.rules"
+        if not os.path.exists(udev_file):
+            form.append({"name": "_dep_warning", "label": "⚠ Missing: temper_udev (udev rule for TEMPer devices). "
+                         "<a href='/pluginlist' style='font-weight:bold;'>Install from plugin list →</a>",
+                         "type": "warning"})
         cur_id = self._config.get("device_id", "")
         try:
             try:
@@ -148,9 +154,12 @@ class P518Temper(PluginBase):
             ]
             form.append({"name": "sensor_type", "label": "Sensor type", "type": "select",
                          "value": str(stype), "options": sensor_opts})
-        except Exception:
+        except Exception as e:
+            logger.error("Temper device scan error: %s", e)
+            if "permission" in str(e).lower():
+                logger.error("Try: sudo apt install libhidapi-dev and add a udev rule for 413d:2107")
             form.append({"name": "device_id", "label": "Device", "type": "text",
-                         "value": cur_id})
+                         "value": cur_id, "placeholder": str(e)})
             form.append({"name": "sensor_type", "label": "Sensor type", "type": "number",
                          "value": str(self._config.get("sensor_type", 0))})
         event.data["form"] = form

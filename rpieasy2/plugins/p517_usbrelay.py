@@ -30,23 +30,36 @@ class _USBRelay:
         self.serialnum = ""
         try:
             for d in hid.enumerate(_VUSB_VID, _VUSB_PID):
-                prod = d.get("product_string", "")
-                if not prod or prod[:-1] != "USBRelay":
+                prod = d.get("product_string", "") or ""
+                if prod and prod[:-1] != "USBRelay":
                     continue
-                rel_count = prod[-1:]
+                if prod:
+                    try:
+                        rel_count = int(prod[-1:])
+                    except ValueError:
+                        rel_count = 1
+                else:
+                    rel_count = 1
                 hidev = hid.device()
                 hidev.open_path(d["path"])
                 result = hidev.get_feature_report(1, 9)
+                logger.debug("USB Relay: opened %s, get_feature_report(1,9) returned %d bytes: %s",
+                             d["path"], len(result) if result else 0, result)
+                if not result or len(result) <= 5:
+                    logger.debug("USB Relay: trying report_id=0, size=8")
+                    result = hidev.get_feature_report(0, 8)
+                    logger.debug("USB Relay: get_feature_report(0,8) returned %d bytes: %s",
+                                 len(result) if result else 0, result)
                 hidev.close()
-                if len(result) > 5:
+                if result and len(result) > 5:
                     resstr = "".join(chr(result[i]) for i in range(5))
                     tarr = [rel_count, d["path"], resstr]
                     self.compdevs.append(tarr)
                     if not self.serialnum:
-                        self.relaynum = int(rel_count)
+                        self.relaynum = rel_count
                         self.serialnum = resstr
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("USB Relay scan error: %s", e)
 
     def getcompatibledevlist(self) -> list[list[Any]]:
         return self.compdevs
@@ -117,8 +130,8 @@ class _USBRelay:
 
 try:
     _USB_RELAY = _USBRelay()
-except ImportError:
-    logger.warning("hid module not available, USB relay disabled")
+except Exception as e:
+    logger.warning("USB Relay module init failed: %s", e)
     _USB_RELAY = None  # type: ignore[assignment]
 
 
@@ -145,6 +158,9 @@ class P517USBRelay(PluginBase):
         self._config = event.data.get("task_config", {})
         self._relay_state = 0
         self._detected = False
+        if _USB_RELAY is None:
+            logger.warning("hid module not available, USB Relay disabled")
+            return True
         try:
             devlist = _USB_RELAY.getcompatibledevlist()
             if len(devlist) > 0:
@@ -238,6 +254,20 @@ class P517USBRelay(PluginBase):
 
     async def on_plugin_webform_load(self, event: Event) -> bool | None:
         form = []
+        missing_deps = []
+        try:
+            import hid
+            hid.device
+        except Exception:
+            missing_deps.append("hidapi")
+        import os
+        udev_file = "/etc/udev/rules.d/99-usbrelay.rules"
+        if not os.path.exists(udev_file):
+            missing_deps.append("usbrelay_udev")
+        if missing_deps:
+            form.append({"name": "_dep_warning", "label": "⚠ Missing: " + ", ".join(missing_deps) +
+                         ". <a href='/pluginlist' style='font-weight:bold;'>Install from plugin list →</a>",
+                         "type": "warning"})
         cur_id = self._config.get("device_id", "")
         rnum = 1
         try:

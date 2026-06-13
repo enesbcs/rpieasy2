@@ -1205,13 +1205,30 @@ class P036FrameOLED(PluginBase):
 
     async def on_plugin_webform_load(self, event: Event) -> bool | None:
         cfg = self._config
-        d = DISPLAY_SIZES.get(int(cfg.get("size", DISP_128x64)), DISPLAY_SIZES[DISP_128x64])
+        size_val = cfg.get("size")
+        if size_val is None:
+            size_val = DISP_128x64
+        d = DISPLAY_SIZES.get(int(size_val), DISPLAY_SIZES[DISP_128x64])
 
         form: list[dict[str, Any]] = []
-        if _PIL_ERROR:
-            form.append({"name": "_pil_error", "label": "PIL Error",
-                         "type": "text", "value": f"Pillow/PIL failed to load: {_PIL_ERROR}. "
-                         "Install: sudo apt-get install -y libtiff6 libopenjp2-7 libxcb1 && pip install Pillow"})
+        missing = []
+        if not _PIL_AVAILABLE:
+            missing.append("Pillow/PIL")
+        try:
+            import smbus2  # noqa: F401
+        except ImportError:
+            missing.append("smbus2")
+        try:
+            from PIL import Image, features  # noqa: F811
+            if not features.check("freetype2"):
+                missing.append("freetype2 (system)")
+        except ImportError:
+            missing.append("Pillow/PIL")
+        if missing:
+            deps = ", ".join(missing)
+            form.append({"name": "_dep_warning", "label": f"⚠ Missing dependencies: {deps}. "
+                         f"<a href='/pluginlist' style='font-weight:bold;'>Install from plugin list →</a>",
+                         "type": "warning"})
         form += [
             {"name": "address", "label": "I2C Address", "type": "select",
              "value": cfg.get("address") or 0x3C, "options": [

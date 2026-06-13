@@ -2652,6 +2652,32 @@ def _check_module(name: str) -> tuple[bool, str]:
             return True, ""
         except Exception:
             return True, ""
+    if name == "hidapi":
+        try:
+            import hid
+            hid.device
+            return True, ""
+        except Exception:
+            return False, "hidapi package not found (pip install hidapi)"
+    if name == "usbrelay_udev":
+        import os
+        udev_file = "/etc/udev/rules.d/99-usbrelay.rules"
+        if os.path.exists(udev_file):
+            with open(udev_file) as f:
+                if "16c0" in f.read() and "05df" in f.read():
+                    return True, ""
+            return False, "udev rule exists but does not match USB Relay (16c0:05df)"
+        return False, "udev rule missing (install usbrelay_udev)"
+    if name == "temper_udev":
+        import os
+        udev_file = "/etc/udev/rules.d/99-temper.rules"
+        if os.path.exists(udev_file):
+            with open(udev_file) as f:
+                content = f.read()
+                if all(v in content for v in ("0c45", "413d", "1a86", "3553")):
+                    return True, ""
+            return False, "udev rule exists but missing some TEMPer VID/PID entries"
+        return False, "udev rule missing (install temper_udev)"
     _import_name = {"pillow": "PIL"}.get(name, name)
     try:
         import importlib
@@ -2866,10 +2892,10 @@ _KNOWN_DEPS: dict[str, list[str]] = {
     "p512": [],
     "p513": ["lgpio"],
     "p514": [],
-    "p515": [],
-    "p516": [],
-    "p517": ["hid"],
-    "p518": [],
+    "p515": ["smbus2"],
+    "p516": ["smbus2"],
+    "p517": ["hidapi", "usbrelay_udev"],
+    "p518": ["temper_udev"],
     "c002": ["aiomqtt"],
     "c005": ["aiomqtt"],
     "c006": ["aiomqtt"],
@@ -2923,6 +2949,7 @@ async def api_plugins_info(request: web.Request) -> web.Response:
 
 _SYSTEM_APT_DEPS: dict[str, list[str]] = {
     "pillow_extra_deps": ["libtiff6", "libopenjp2-7", "libxcb1", "libfreetype6-dev"],
+    "hidapi": ["libhidapi-dev"],
 }
 
 
@@ -2934,7 +2961,7 @@ async def api_plugins_install(request: web.Request) -> web.Response:
     if not pkg:
         return web.json_response({"status": "error", "message": "no package specified"})
 
-    if pkg == "pillow_extra_deps":
+    if pkg in ("pillow_extra_deps", "hidapi"):
         pkgs = _SYSTEM_APT_DEPS.get(pkg, [])
         if not pkgs:
             return web.json_response({"status": "error", "message": "unknown package"})
@@ -2956,10 +2983,11 @@ async def api_plugins_install(request: web.Request) -> web.Response:
                 await proc.wait()
                 return web.json_response({"status": "error", "message": "installation timed out"})
             if proc.returncode == 0:
+                pip_pkg = "Pillow" if pkg == "pillow_extra_deps" else "hidapi"
                 import sys as _sys
                 pip_path = _sys.executable.replace("python", "pip")
                 pip_proc = await asyncio.create_subprocess_exec(
-                    pip_path, "install", "--force-reinstall", "Pillow",
+                    pip_path, "install", "--force-reinstall", pip_pkg,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
                 )
@@ -2968,17 +2996,75 @@ async def api_plugins_install(request: web.Request) -> web.Response:
                 except asyncio.TimeoutError:
                     pip_proc.kill()
                     await pip_proc.wait()
-                    return web.json_response({"status": "ok", "message": "System deps installed, but Pillow reinstall timed out. Try: pip install --force-reinstall Pillow"})
+                    return web.json_response({"status": "ok", "message": "System deps installed, but reinstall timed out. Try: pip install --force-reinstall " + pip_pkg})
                 if pip_proc.returncode == 0:
-                    return web.json_response({"status": "ok", "message": "System deps + Pillow reinstalled"})
+                    return web.json_response({"status": "ok", "message": "System deps + " + pip_pkg + " reinstalled"})
                 else:
-                    return web.json_response({"status": "ok", "message": "System deps installed. Pillow reinstall: " + pip_stderr.decode().strip()})
+                    return web.json_response({"status": "ok", "message": "System deps installed. Reinstall: " + pip_stderr.decode().strip()})
             err_msg = stderr.decode().strip()
             if "a password is required" in err_msg or "no password was provided" in err_msg.lower():
                 return web.json_response({"status": "error", "message": "sudo password required", "need_sudo": True, "pkgs": pkgs})
             return web.json_response({"status": "error", "message": err_msg or f"apt-get failed (exit code {proc.returncode})"})
         except Exception as e:
             return web.json_response({"status": "error", "message": str(e)})
+
+    if pkg in ("usbrelay_udev", "temper_udev"):
+        if pkg == "usbrelay_udev":
+            udev_file = "/etc/udev/rules.d/99-usbrelay.rules"
+            rule = 'SUBSYSTEM=="usb", ATTRS{idVendor}=="16c0", ATTRS{idProduct}=="05df", MODE="0666"\n'
+        else:
+            udev_file = "/etc/udev/rules.d/99-temper.rules"
+            rule = (
+                '# TEMPer USB temperature sensors\n'
+                'SUBSYSTEM=="hidraw", ATTRS{idVendor}=="0c45", ATTRS{idProduct}=="7401", MODE="0666"\n'
+                'SUBSYSTEM=="hidraw", ATTRS{idVendor}=="0c45", ATTRS{idProduct}=="7402", MODE="0666"\n'
+                'SUBSYSTEM=="hidraw", ATTRS{idVendor}=="413d", ATTRS{idProduct}=="2107", MODE="0666"\n'
+                'SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="5523", MODE="0666"\n'
+                'SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="e025", MODE="0666"\n'
+                'SUBSYSTEM=="hidraw", ATTRS{idVendor}=="3553", ATTRS{idProduct}=="a001", MODE="0666"\n'
+            )
+        import os
+        if os.path.exists(udev_file):
+            with open(udev_file) as f:
+                if rule.strip() in f.read():
+                    return web.json_response({"status": "ok", "message": "udev rule already present"})
+        cmd = ["sudo", "-n", "tee", udev_file]
+        sudo_password = body.get("sudo_password", "")
+        if sudo_password:
+            cmd = ["sudo", "-S", "tee", udev_file]
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, stderr = await asyncio.wait_for(
+                proc.communicate(input=rule.encode()),
+                timeout=30,
+            )
+            if proc.returncode != 0:
+                err_msg = stderr.decode().strip()
+                if "a password is required" in err_msg or "no password was provided" in err_msg.lower():
+                    return web.json_response({"status": "error", "message": "sudo password required", "need_sudo": True, "pkgs": [udev_file]})
+                return web.json_response({"status": "error", "message": err_msg or f"tee failed (exit {proc.returncode})"})
+        except asyncio.TimeoutError:
+            return web.json_response({"status": "error", "message": "writing udev rule timed out"})
+        except Exception as e:
+            return web.json_response({"status": "error", "message": str(e)})
+        reload_cmd = ["sudo", "-n"] if not sudo_password else ["sudo", "-S"]
+        reload_cmd += ["udevadm", "control", "--reload-rules"]
+        try:
+            await asyncio.create_subprocess_exec(*reload_cmd, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
+        except Exception:
+            pass
+        trigger_cmd = ["sudo", "-n"] if not sudo_password else ["sudo", "-S"]
+        trigger_cmd += ["udevadm", "trigger"]
+        try:
+            await asyncio.create_subprocess_exec(*trigger_cmd, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
+        except Exception:
+            pass
+        return web.json_response({"status": "ok", "message": "udev rule installed, reloaded. Re-plug the USB relay or restart."})
 
     import sys as _sys
     pip_path = _sys.executable.replace("python", "pip")
