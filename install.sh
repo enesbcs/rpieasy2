@@ -40,6 +40,7 @@ if [ -f /proc/device-tree/model ] && grep -qi "raspberry" /proc/device-tree/mode
 elif [ -f /sys/firmware/devicetree/base/model ] && grep -qi "raspberry" /sys/firmware/devicetree/base/model 2>/dev/null; then
     IS_RPI=true
 fi
+sudo usermod -aG dialout $(whoami)
 if [ "$IS_RPI" = true ]; then
     echo "==> Raspberry Pi detected, installing liblgpio-dev..."
     sudo apt-get install -y -qq liblgpio-dev
