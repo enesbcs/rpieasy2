@@ -8,6 +8,7 @@ import time
 from typing import Any
 
 from rpieasy2.core.events import Event, get_event_bus
+from rpieasy2.core.rules_engine import RuleCommand, get_rules_engine
 from rpieasy2.core.rpiconst import (
     BUILD,
     DEFAULT_P2P_PORT,
@@ -219,6 +220,18 @@ async def _udp_listener():
 
         def datagram_received(self, data: bytes, addr: tuple[str, int]):
             if len(data) < 2 or data[0] != 255:
+                try:
+                    text = data.decode("utf-8", errors="replace").strip()
+                    if text:
+                        engine = get_rules_engine()
+                        if engine and engine.is_enabled():
+                            rc = RuleCommand(text)
+                            if rc.name:
+                                asyncio.ensure_future(engine._execute_command(rc, {
+                                    "task_values": {}, "vars": engine._vars, "str_vars": engine._str_vars,
+                                }))
+                except Exception:
+                    pass
                 return
             msg_type = data[1]
             if msg_type == 1:

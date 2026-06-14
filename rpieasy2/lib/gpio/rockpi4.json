@@ -1,0 +1,40 @@
+{
+  "board": "Rock 4",
+  "soc": "Rockchip RK3399",
+  "gpiochips": {
+    "gpiochip0": { "controller": "GPIO0", "ports": ["A","B","C","D"] },
+    "gpiochip1": { "controller": "GPIO1", "ports": ["A","B","C","D"] },
+    "gpiochip2": { "controller": "GPIO2", "ports": ["A","B","C","D"] },
+    "gpiochip3": { "controller": "GPIO3", "ports": ["A","B","C","D"] },
+    "gpiochip4": { "controller": "GPIO4", "ports": ["A","B","C","D"] }
+  },
+  "pins": [
+    { "gpio_name": "GPIO2_A7", "gpiochip": 2, "line": 7, "physical_pin": 3 },
+    { "gpio_name": "GPIO2_B0", "gpiochip": 2, "line": 8, "physical_pin": 5 },
+    { "gpio_name": "GPIO2_B3", "gpiochip": 2, "line": 11, "physical_pin": 7 },
+    { "gpio_name": "GPIO4_C4", "gpiochip": 4, "line": 4, "physical_pin": 8 },
+    { "gpio_name": "GPIO4_C3", "gpiochip": 4, "line": 3, "physical_pin": 10 },
+    { "gpio_name": "GPIO4_C2", "gpiochip": 4, "line": 2, "physical_pin": 11 },
+    { "gpio_name": "GPIO4_A3", "gpiochip": 4, "line": 3, "physical_pin": 12 },
+    { "gpio_name": "GPIO4_C6", "gpiochip": 4, "line": 6, "physical_pin": 13 },
+    { "gpio_name": "GPIO4_C5", "gpiochip": 4, "line": 5, "physical_pin": 15 },
+    { "gpio_name": "GPIO4_D2", "gpiochip": 4, "line": 2, "physical_pin": 16 },
+    { "gpio_name": "GPIO4_D4", "gpiochip": 4, "line": 4, "physical_pin": 18 },
+    { "gpio_name": "GPIO4_D5", "gpiochip": 4, "line": 5, "physical_pin": 22 },
+    { "gpio_name": "GPIO4_D6", "gpiochip": 4, "line": 6, "physical_pin": 37 },
+    { "gpio_name": "GPIO1_B0", "gpiochip": 1, "line": 0, "physical_pin": 19 },
+    { "gpio_name": "GPIO1_A7", "gpiochip": 1, "line": 7, "physical_pin": 21 },
+    { "gpio_name": "GPIO1_B1", "gpiochip": 1, "line": 1, "physical_pin": 23 },
+    { "gpio_name": "GPIO1_B2", "gpiochip": 1, "line": 2, "physical_pin": 24 },
+    { "gpio_name": "GPIO2_A0", "gpiochip": 2, "line": 0, "physical_pin": 27 },
+    { "gpio_name": "GPIO2_A1", "gpiochip": 2, "line": 1, "physical_pin": 28 },
+    { "gpio_name": "GPIO2_B2", "gpiochip": 2, "line": 10, "physical_pin": 29 },
+    { "gpio_name": "GPIO2_B1", "gpiochip": 2, "line": 9, "physical_pin": 31 },
+    { "gpio_name": "GPIO2_B4", "gpiochip": 2, "line": 12, "physical_pin": 33 },
+    { "gpio_name": "GPIO3_C0", "gpiochip": 3, "line": 16, "physical_pin": 32 },
+    { "gpio_name": "GPIO4_A5", "gpiochip": 4, "line": 5, "physical_pin": 35 },
+    { "gpio_name": "GPIO4_A4", "gpiochip": 4, "line": 4, "physical_pin": 36 },
+    { "gpio_name": "GPIO4_A6", "gpiochip": 4, "line": 6, "physical_pin": 38 },
+    { "gpio_name": "GPIO4_A7", "gpiochip": 4, "line": 7, "physical_pin": 40 }
+  ]
+}

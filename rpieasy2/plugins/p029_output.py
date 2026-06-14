@@ -78,11 +78,16 @@ class P029Output(PluginBase):
         if self._pin < 0 or not self._hw:
             return False
         try:
-            # Normalize incoming value: either numeric string in string1 or parsed JSON
-            if event.parsed_json and "value" in event.parsed_json:
+            val: int | None = None
+            sv = event.data.get("values", {})
+            if sv and "Output" in sv:
+                val = int(sv["Output"])
+            elif event.parsed_json and "value" in event.parsed_json:
                 val = int(event.parsed_json.get("value"))
-            else:
+            elif event.string1:
                 val = int(event.string1)
+            if val is None:
+                return False
             inverted = self._config.get("inverted", False)
             self._state = 1 - val if inverted else val
             self._hw.gpio.write(self._pin, self._state)

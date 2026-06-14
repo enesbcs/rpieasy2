@@ -39,9 +39,11 @@
         }).catch(function() { btn.textContent = 'Reboot failed'; });
     }
     function doShutdown() {
+        var pwd = prompt('Enter sudo password (leave empty if NOPASSWD configured):');
+        var body = pwd ? JSON.stringify({password: pwd}) : '{}';
         var btn = document.getElementById('shutdown-btn');
         btn.textContent = 'Shutting down...';
-        fetch('/api/system/shutdown', {method:'POST', headers:{'Content-Type':'application/json'}, body:'{}'}).then(function(r) {
+        fetch('/api/system/shutdown', {method:'POST', headers:{'Content-Type':'application/json'}, body:body}).then(function(r) {
             if (r.ok) btn.textContent = 'Shutdown initiated...';
         }).catch(function() { btn.textContent = 'Shutdown failed'; });
     }

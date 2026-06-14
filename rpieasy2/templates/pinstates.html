@@ -1,5 +1,30 @@
 {% extends "base.html" %}
 {% block content %}
+{% if is_alt %}
+<table class='normal'>
+    <TR><TH colspan='7'>Pin States - GPIO List</TH></TR>
+    <TR>
+        <TH>Global GPIO</TH>
+        <TH>Chip</TH>
+        <TH>Line</TH>
+        <TH>Name</TH>
+        <TH>Direction</TH>
+        <TH>Value</TH>
+        <TH>Consumer</TH>
+    </TR>
+    {% for g in alt_gpio_states %}
+    <TR>
+        <TD style='text-align:center;font-weight:bold;'>{{ g.global_pin }}</TD>
+        <TD style='text-align:center;'>{{ g.gpiochip }}</TD>
+        <TD style='text-align:center;'>{{ g.line }}</TD>
+        <TD>{{ g.name }}</TD>
+        <TD>{{ g.direction if g.direction else '-' }}</TD>
+        <TD style='text-align:center;font-family:monospace;'>{{ g.value if g.value else '-' }}</TD>
+        <TD style='font-size:0.9em;'>{{ g.consumer if g.consumer else '-' }}</TD>
+    </TR>
+    {% endfor %}
+</table>
+{% else %}
 <table class='normal'>
     <TR><TH colspan='6'>Pin States</TH></TR>
     <TR>
@@ -44,6 +69,7 @@
         Total usable: <strong>{{ usable_count }}</strong> / {{ total_count }}
     </TD></TR>
 </table>
+{% endif %}
 <BR>
 <a class='button link' href='/tools'>Back to Tools</a>
 {% endblock %}

@@ -18,6 +18,7 @@ from rpieasy2.core.rpiconst import (
     SENSOR_V_TYPE_SWITCH,
     get_discovery_vtypes,
 )
+from rpieasy2.core.rules_engine import RuleCommand, get_rules_engine
 from rpieasy2.core.system_vars import resolve_controller_template
 from rpieasy2.core import webserver as webserver_mod
 from rpieasy2.core.config import get_config
@@ -55,6 +56,7 @@ class C005HomeAssistantMQTT(ControllerBase):
         self._state_topic_map: dict[str, tuple[int, str]] = {}
         # track which command topics we've already subscribed to to avoid subscribe spam
         self._subscribed_cmd_topics: set[str] = set()
+        self._cmd_sub_topic: str | None = None
 
     async def on_controller_init(self, event: Event) -> bool | None:
         config: dict[str, Any] = event.data.get("controller_config", {})
@@ -89,6 +91,9 @@ class C005HomeAssistantMQTT(ControllerBase):
             logger.exception("Failed to start state topic map cleanup loop")
         # Clear the published discovery set on init to prevent unbounded growth
         self._published_discovery.clear()
+        self._cmd_sub_topic = None
+        if config.get("enable_cmd_subscription"):
+            self._cmd_sub_topic = resolve_controller_template("%sysname%/cmd", controller_config=config)
         # start MQTT client loop only if enabled
         if config.get("controllerenabled", config.get("enabled", True)):
             asyncio.create_task(self._run_client_loop())
@@ -261,6 +266,8 @@ class C005HomeAssistantMQTT(ControllerBase):
                             await client.subscribe(f"{self._discovery_prefix}/+/+/set")
                             if config.get("discoverytriggertopic"):
                                 await client.subscribe(config["discoverytriggertopic"])
+                            if self._cmd_sub_topic:
+                                await client.subscribe(self._cmd_sub_topic)
                         except Exception:
                             logger.exception("Failed to subscribe discovery/control topics")
 
@@ -343,6 +350,16 @@ class C005HomeAssistantMQTT(ControllerBase):
             async for msg in self._client.messages:
                 topic = msg.topic.value
                 payload = msg.payload.decode().strip()
+                if self._cmd_sub_topic and topic == self._cmd_sub_topic:
+                    if payload:
+                        engine = get_rules_engine()
+                        if engine and engine.is_enabled():
+                            rc = RuleCommand(payload)
+                            if rc.name:
+                                await engine._execute_command(rc, {
+                                    "task_values": {}, "vars": engine._vars, "str_vars": engine._str_vars,
+                                })
+                    continue
                 # discovery trigger handling: if trigger topic received with 'online', republish availability
                 if self._ctrl_config.get("discoverytriggertopic") and topic == self._ctrl_config["discoverytriggertopic"]:
                     logger.debug("Discovery trigger received on %s: %r", topic, payload)

@@ -12,7 +12,6 @@ import json as _json
 import aiohttp_jinja2
 import asyncio
 import jinja2
-import psutil
 import shutil
 import zipfile
 import tempfile
@@ -254,6 +253,93 @@ _sysinfo: dict[str, Any] = {}
 _sysinfo_last_refresh: float = 0.0
 _last_task_values: dict[int, dict[str, Any]] = {}
 
+GPIO_NAMES: list[dict] = []
+
+
+def load_gpio_names() -> None:
+    global GPIO_NAMES
+    GPIO_NAMES = []
+    names = []
+    i = 0
+    while True:
+        path = f"/dev/gpiochip{i}"
+        try:
+            import gpiod
+            with gpiod.Chip(path) as chip:
+                info = chip.get_info()
+                for offset in range(info.num_lines):
+                    li = chip.get_line_info(offset)
+                    name = li.name or ""
+                    names.append({
+                        "global_pin": i * 1000 + offset,
+                        "gpiochip": i,
+                        "line": offset,
+                        "name": name,
+                        "direction": "Input" if li.direction == gpiod.line.Direction.INPUT else "Output",
+                        "consumer": li.consumer or "",
+                        "used": li.used,
+                    })
+        except OSError:
+            break
+        except Exception:
+            break
+        i += 1
+    logger.debug("load_gpio_names: scanned %d gpiochips, %d total lines", i, len(names))
+    named_count = sum(1 for n in names if n["name"])
+    logger.debug("load_gpio_names: %d named GPIO lines out of %d", named_count, len(names))
+    has_any_name = named_count > 0
+    if has_any_name:
+        GPIO_NAMES = [n for n in names if n["name"]]
+        logger.debug("load_gpio_names: using gpiod names, stored %d entries", len(GPIO_NAMES))
+        return
+    logger.debug("load_gpio_names: no named GPIO lines found via gpiod, trying JSON fallback")
+    board_schema = ""
+    try:
+        with open("/etc/armbian-release") as f:
+            for line in f:
+                if line.startswith("BOARD="):
+                    board_schema = line.split("=", 1)[1].strip().strip('"').strip("'")
+                elif line.startswith("BOARD_NAME="):
+                    val = line.split("=", 1)[1].strip().strip('"').strip("'")
+                    if not board_schema:
+                        board_schema = val
+    except Exception as e:
+        logger.debug("load_gpio_names: failed to read /etc/armbian-release: %s", e)
+        return
+    import re
+    raw_schema = board_schema
+    board_schema = re.sub(r'[\s"\'\-]+', "", board_schema).lower()
+    logger.debug("load_gpio_names: raw board_schema=%r cleaned=%r", raw_schema, board_schema)
+    if not board_schema:
+        logger.debug("load_gpio_names: board_schema empty after cleaning, aborting JSON fallback")
+        return
+    json_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "lib", "gpio", f"{board_schema}.json")
+    logger.debug("load_gpio_names: looking for JSON file at %s", json_path)
+    if os.path.exists(json_path):
+        try:
+            with open(json_path) as f:
+                data = _json.load(f)
+            pins = data.get("pins", [])
+            logger.debug("load_gpio_names: found JSON with %d pins", len(pins))
+            for p in pins:
+                chip_num = p.get("gpiochip", 0)
+                line = p.get("line", 0)
+                gname = p.get("gpio_name", "")
+                GPIO_NAMES.append({
+                    "global_pin": chip_num * 1000 + line,
+                    "gpiochip": chip_num,
+                    "line": line,
+                    "name": gname,
+                    "direction": "",
+                    "consumer": "",
+                    "used": False,
+                })
+            logger.debug("load_gpio_names: loaded %d entries from JSON fallback", len(GPIO_NAMES))
+        except Exception as e:
+            logger.debug("load_gpio_names: failed to parse JSON: %s", e)
+    else:
+        logger.debug("load_gpio_names: JSON file not found at %s", json_path)
+
 
 def _get_sysinfo() -> dict[str, Any]:
     return _sysinfo
@@ -279,11 +365,24 @@ def _build_sysinfo() -> dict[str, Any]:
     else:
         uptime_str = f"{hours:02d}h{minutes:02d}m"
 
-    load = psutil.getloadavg()
-    mem = psutil.virtual_memory()
-    free_ram_bytes = mem.available
-    total_ram_bytes = mem.total
-    used_ram_bytes = mem.total - mem.available
+    load = os.getloadavg()
+    free_ram_bytes = 0
+    total_ram_bytes = 0
+    used_ram_bytes = 0
+    try:
+        with open("/proc/meminfo") as f:
+            for line in f:
+                parts = line.split(":")
+                if len(parts) == 2:
+                    key = parts[0].strip()
+                    val_str = parts[1].strip().split()[0]
+                    if key == "MemTotal":
+                        total_ram_bytes = int(val_str) * 1024
+                    elif key == "MemAvailable":
+                        free_ram_bytes = int(val_str) * 1024
+        used_ram_bytes = total_ram_bytes - free_ram_bytes
+    except Exception:
+        pass
 
     from rpieasy2.core.util import get_wifi_rssi, get_wifi_ssid
     rssi_val = get_wifi_rssi()
@@ -353,19 +452,19 @@ def _build_sysinfo() -> dict[str, Any]:
         except AttributeError:
             cpu_cores = _os.cpu_count() or 0
 
-    rpi_model = ""
-    if is_raspberry_pi():
-        try:
-            with open("/proc/device-tree/model") as f:
-                rpi_model = f.read().strip("\x00").strip()
-        except Exception:
-            pass
-        try:
-            if not rpi_model:
-                with open("/sys/firmware/devicetree/base/model") as f:
-                    rpi_model = f.read().strip("\x00").strip()
-        except Exception:
-            pass
+    device_tree_model = ""
+    try:
+        with open("/proc/device-tree/model") as f:
+            device_tree_model = f.read().strip("\x00").strip()
+    except Exception:
+        pass
+    try:
+        if not device_tree_model:
+            with open("/sys/firmware/devicetree/base/model") as f:
+                device_tree_model = f.read().strip("\x00").strip()
+    except Exception:
+        pass
+    rpi_model = device_tree_model if is_raspberry_pi() else ""
     board_vendor = ""
     board_name = ""
     try:
@@ -432,6 +531,7 @@ def _build_sysinfo() -> dict[str, Any]:
         "cpu_model": cpu_model,
         "cpu_cores": cpu_cores,
         "rpi_model": rpi_model,
+        "device_tree_model": device_tree_model,
         "board_vendor": board_vendor,
         "board_name": board_name,
         "os_name": os_name,
@@ -650,7 +750,7 @@ async def index(request: web.Request) -> web.Response:
         "type": "RPIEasy",
         "ip": ip_addr,
         "web_port": web_port,
-        "load": f"{psutil.getloadavg()[0]:.2f}",
+        "load": f"{os.getloadavg()[0]:.2f}",
         "age": str(int(time.time() - _start_time)),
     }]
     discovered = get_discovered_nodes()
@@ -741,6 +841,7 @@ async def controllers_post(request: web.Request) -> web.Response:
         "willretain": "willretain" in data,
         "cleansession": "cleansession" in data,
         "keepalivetime": _safe_int(data.get("keepalivetime", 60)),
+        "enable_cmd_subscription": "enable_cmd_subscription" in data,
         "enableautodiscovery": "enableautodiscovery" in data,
         "discoverytriggertopic": data.get("discoverytriggertopic", "homeassistant/status"),
         "autodiscoverytopic": data.get("autodiscoverytopic") or ctrl_defaults.get("autodiscoverytopic", "homeassistant/%devclass%/%unique_id%"),
@@ -842,6 +943,206 @@ def _read_boot_gpio_config() -> dict[int, str]:
     except Exception:
         pass
     return result
+
+
+ARMBIAN_ENV_PATH = "/boot/armbianEnv.txt"
+
+
+def _enrich_gpio_names() -> list[dict]:
+    chips: dict[int, Any] = {}
+    Direction = None
+    try:
+        import gpiod
+        try:
+            from gpiod.line import Direction
+        except ImportError:
+            Direction = gpiod.LineDirection
+        for g in GPIO_NAMES:
+            cn = g["gpiochip"]
+            if cn not in chips:
+                try:
+                    chips[cn] = gpiod.Chip(f"/dev/gpiochip{cn}")
+                except Exception:
+                    chips[cn] = None
+    except Exception:
+        return [dict(g, direction="", consumer="", value_str="?") for g in GPIO_NAMES]
+    if Direction is None:
+        return [dict(g, direction="", consumer="", value_str="?") for g in GPIO_NAMES]
+    result = []
+    for g in GPIO_NAMES:
+        entry = dict(g)
+        cn = g["gpiochip"]
+        ln = g["line"]
+        entry["value_str"] = "?"
+        chip = chips.get(cn)
+        if chip is not None:
+            try:
+                li = chip.get_line_info(ln)
+                entry["direction"] = "Input" if li.direction == Direction.INPUT else "Output"
+                entry["consumer"] = li.consumer or ""
+                entry["used"] = li.used
+                if li.direction == Direction.INPUT:
+                    try:
+                        try:
+                            req = chip.request_lines(config={ln: None})
+                        except Exception:
+                            s = gpiod.LineSettings()
+                            s.direction = Direction.INPUT
+                            req = chip.request_lines(config={ln: s})
+                        vals = req.get_values([ln])
+                        entry["value_str"] = str(int(vals[0]))
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+        result.append(entry)
+    for c in chips.values():
+        if c is not None:
+            try:
+                c.close()
+            except Exception:
+                pass
+    return result
+OVERLAY_DIRS = ["/boot/overlays", "/boot/dtb/overlay", "/boot/dtb/rockchip/overlay"]
+OVERLAY_KEYWORDS = ["i2c", "pwm", "spdif", "spi", "uart", "w1"]
+
+
+def _read_armbian_env() -> dict:
+    result: dict = {"overlay_prefix": "", "overlays": [], "user_overlays": [], "lines": []}
+    try:
+        with open(ARMBIAN_ENV_PATH) as f:
+            lines = f.read().splitlines()
+        result["lines"] = lines
+        for line in lines:
+            line_stripped = line.strip()
+            if line_stripped.startswith("overlay_prefix="):
+                result["overlay_prefix"] = line_stripped.split("=", 1)[1].strip()
+            elif line_stripped.startswith("overlays="):
+                raw = line_stripped.split("=", 1)[1].strip()
+                result["overlays"] = raw.split() if raw else []
+            elif line_stripped.startswith("user_overlays="):
+                raw = line_stripped.split("=", 1)[1].strip()
+                result["user_overlays"] = raw.split() if raw else []
+    except Exception:
+        pass
+    return result
+
+
+def _scan_overlays() -> list[str]:
+    env = _read_armbian_env()
+    prefix = env["overlay_prefix"]
+    if not prefix:
+        return []
+    found = set()
+    for d in OVERLAY_DIRS:
+        if not os.path.isdir(d):
+            continue
+        try:
+            for fname in os.listdir(d):
+                if fname.startswith(prefix) and fname.endswith(".dtbo"):
+                    name = fname[len(prefix):-len(".dtbo")]
+                    if name.startswith("-"):
+                        name = name[1:]
+                    for kw in OVERLAY_KEYWORDS:
+                        if kw in name.lower():
+                            found.add(name)
+                            break
+        except Exception:
+            pass
+    return sorted(found, key=lambda x: (x.lower(), x))
+
+
+def _scan_user_overlays() -> list[str]:
+    found = set()
+    user_dir = "/boot/overlay-user"
+    if not os.path.isdir(user_dir):
+        return []
+    try:
+        for fname in os.listdir(user_dir):
+            if fname.endswith(".dtbo"):
+                found.add(fname[:-len(".dtbo")])
+    except Exception:
+        pass
+    return sorted(found)
+
+
+def _write_armbian_env(overlay_names: set[str], password: str = "") -> str | None:
+    import subprocess
+    env = _read_armbian_env()
+    current_overlays = set(env["overlays"])
+    current_user_overlays = set(env["user_overlays"])
+    prefix = env.get("overlay_prefix", "")
+    known = set(_scan_overlays())
+    user_known = set(_scan_user_overlays())
+
+    user_set = user_known | current_user_overlays
+
+    input_user = overlay_names & user_set
+    input_regular = overlay_names - user_set
+
+    def _strip_prefix(name: str) -> str:
+        if prefix and name.startswith(prefix + "-"):
+            return name[len(prefix) + 1:]
+        return name
+
+    untouched_overlays = set()
+    for ov in current_overlays:
+        if ov in user_set:
+            continue
+        if _strip_prefix(ov) not in known:
+            untouched_overlays.add(ov)
+
+    moves_to_user = current_overlays & user_set & overlay_names
+
+    new_overlays = sorted(untouched_overlays | input_regular)
+    new_user_overlays = sorted(input_user | moves_to_user)
+
+    new_line = "overlays=" + " ".join(new_overlays) if new_overlays else "overlays="
+    new_user_line = "user_overlays=" + " ".join(new_user_overlays) if new_user_overlays else "user_overlays="
+
+    lines = env["lines"]
+    found_overlays = False
+    found_user = False
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if stripped.startswith("overlays="):
+            lines[i] = new_line
+            found_overlays = True
+        elif stripped.startswith("user_overlays="):
+            lines[i] = new_user_line
+            found_user = True
+    if not found_overlays:
+        lines.append(new_line)
+    if not found_user:
+        lines.append(new_user_line)
+    new_content = "\n".join(lines) + "\n"
+    try:
+        with open(ARMBIAN_ENV_PATH, "w") as f:
+            f.write(new_content)
+        return None
+    except PermissionError:
+        pass
+    try:
+        if password:
+            proc = subprocess.run(
+                ["sudo", "-S", "tee", ARMBIAN_ENV_PATH],
+                input=password + "\n" + new_content,
+                capture_output=True, text=True, timeout=10,
+            )
+        else:
+            proc = subprocess.run(
+                ["sudo", "tee", ARMBIAN_ENV_PATH],
+                input=new_content, capture_output=True, text=True, timeout=10,
+            )
+        if proc.returncode == 0:
+            return None
+        if password:
+            return f"Write failed (wrong password?): {proc.stderr.strip()}"
+        return "NEED_PASSWORD"
+    except FileNotFoundError:
+        return "sudo not found"
+    except Exception as e:
+        return f"Write error: {e}"
 
 
 def _write_boot_config(form_data: dict[str, str], password: str = "", force_disabled_pins: set[int] | None = None) -> str | None:
@@ -1092,8 +1393,28 @@ async def hardware_page(request: web.Request) -> web.Response:
     boot_config = _read_boot_config()
     boot_gpio_config = _read_boot_gpio_config()
     is_rpi = is_raspberry_pi()
+    from rpieasy2.core.rpiconst import is_alternative_board
+    is_alt = is_alternative_board()
+    device_tree_model = ""
+    try:
+        with open("/proc/device-tree/model") as f:
+            device_tree_model = f.read().strip("\x00").strip()
+    except Exception:
+        pass
+    if not device_tree_model:
+        try:
+            with open("/sys/firmware/devicetree/base/model") as f:
+                device_tree_model = f.read().strip("\x00").strip()
+        except Exception:
+            pass
     drivers = {}
-    for drv in (["lgpio", "smbus2", "spidev"] if is_rpi else ["pyftdi"]):
+    if is_rpi:
+        drv_list = ["lgpio", "smbus2", "spidev"]
+    elif is_alt:
+        drv_list = ["gpiod", "smbus2", "spidev"]
+    else:
+        drv_list = ["pyftdi"]
+    for drv in drv_list:
         avail, note = _check_module(drv)
         drivers[drv] = {"available": avail, "note": note}
     special_pins: set[int] = {0, 1}
@@ -1111,39 +1432,107 @@ async def hardware_page(request: web.Request) -> web.Response:
         special_pins.update({12, 13})
     cfg = get_config()
     ftdi_devices = cfg.data.get("system", {}).get("ftdi_devices", [])
-    return aiohttp_jinja2.render_template("hardware.html", request,
-        _ctx("Hardware", "hardware", boot_config=boot_config,
-             boot_gpio_config=boot_gpio_config,
-             boot_config_path=_BOOT_CONFIG_PATH,
-             usable_gpios=sorted(RPI_USABLE_GPIO),
-             drivers=drivers, is_rpi=is_rpi,
-             special_pins=special_pins,
-             ftdi_devices=ftdi_devices))
+    overlays = _scan_overlays() if is_alt else []
+    env = _read_armbian_env() if is_alt else {}
+    ctx = _ctx("Hardware", "hardware", boot_config=boot_config,
+         boot_gpio_config=boot_gpio_config,
+         boot_config_path=_BOOT_CONFIG_PATH,
+         usable_gpios=sorted(RPI_USABLE_GPIO),
+         drivers=drivers, is_rpi=is_rpi, is_alt=is_alt,
+         device_tree_model=device_tree_model,
+         special_pins=special_pins,
+         ftdi_devices=ftdi_devices)
+    if is_alt:
+        ctx["overlays"] = sorted(set(overlays) | set(_scan_user_overlays()))
+        ctx["current_overlays"] = env.get("overlays", []) + env.get("user_overlays", [])
+        ctx["overlay_prefix"] = env.get("overlay_prefix", "")
+        ctx["gpio_names"] = _enrich_gpio_names()
+        ctx["gpio_modes"] = cfg.data.get("system", {}).get("gpio_modes", {})
+    return aiohttp_jinja2.render_template("hardware.html", request, ctx)
 
 
 @_routes.post("/hardware")
 async def hardware_post(request: web.Request) -> web.Response:
     data = await request.post()
     password = data.get("password", "")
-    special_pins_write: set[int] = {0, 1}
-    if "i2c_arm" in data:
-        special_pins_write.update({2, 3})
-    if "spi" in data:
-        special_pins_write.update({8, 9, 10, 11})
-    if "spi1" in data:
-        special_pins_write.update({16, 17, 18, 19})
-    if "uart" in data:
-        special_pins_write.update({14, 15})
-    if "pwm" in data:
-        special_pins_write.update({12, 13, 18, 19})
-    if "audio" in data:
-        special_pins_write.update({12, 13})
-    result = _write_boot_config(data, password, force_disabled_pins=special_pins_write)
+    from rpieasy2.core.rpiconst import is_alternative_board
+    is_alt = is_alternative_board()
+    result = None
+    gpio_result = None
+    if is_alt:
+        has_overlays = any(k.startswith("overlay_") for k in data)
+        has_gpio_modes = any(k.startswith("gpio_mode_") for k in data)
+
+        if has_gpio_modes:
+            gpio_modes: dict[str, str] = {}
+            for key, val in data.items():
+                if key.startswith("gpio_mode_"):
+                    mode_val = str(val)
+                    if mode_val != "none":
+                        gpio_modes[key[len("gpio_mode_"):]] = mode_val
+            _cfg = get_config()
+            sys_cfg = _cfg.data.setdefault("system", {})
+            sys_cfg["gpio_modes"] = gpio_modes
+            _cfg.save()
+            hw = request.app.get("hw_manager")
+            if hw and hasattr(hw, "gpio") and hasattr(hw.gpio, "set_pin_mode"):
+                for pin_str, mode in gpio_modes.items():
+                    try:
+                        hw.gpio.set_pin_mode(int(pin_str), mode)
+                    except Exception:
+                        pass
+                if hasattr(hw.gpio, "apply_pin_modes"):
+                    try:
+                        hw.gpio.apply_pin_modes()
+                    except Exception:
+                        pass
+            gpio_result = "GPIO modes saved."
+        if has_overlays:
+            enabled_overlays = set()
+            for key, val in data.items():
+                if key.startswith("overlay_"):
+                    enabled_overlays.add(key[len("overlay_"):])
+            result = _write_armbian_env(enabled_overlays, password)
+    else:
+        special_pins_write: set[int] = {0, 1}
+        if "i2c_arm" in data:
+            special_pins_write.update({2, 3})
+        if "spi" in data:
+            special_pins_write.update({8, 9, 10, 11})
+        if "spi1" in data:
+            special_pins_write.update({16, 17, 18, 19})
+        if "uart" in data:
+            special_pins_write.update({14, 15})
+        if "pwm" in data:
+            special_pins_write.update({12, 13, 18, 19})
+        if "audio" in data:
+            special_pins_write.update({12, 13})
+        result = _write_boot_config(data, password, force_disabled_pins=special_pins_write)
     boot_config = _read_boot_config()
     boot_gpio_config = _read_boot_gpio_config()
+    from rpieasy2.core.rpiconst import is_alternative_board
     is_rpi = is_raspberry_pi()
+    is_alt = is_alternative_board()
+    device_tree_model = ""
+    try:
+        with open("/proc/device-tree/model") as f:
+            device_tree_model = f.read().strip("\x00").strip()
+    except Exception:
+        pass
+    if not device_tree_model:
+        try:
+            with open("/sys/firmware/devicetree/base/model") as f:
+                device_tree_model = f.read().strip("\x00").strip()
+        except Exception:
+            pass
     drivers = {}
-    for drv in (["lgpio", "smbus2", "spidev"] if is_rpi else ["pyftdi"]):
+    if is_rpi:
+        drv_list = ["lgpio", "smbus2", "spidev"]
+    elif is_alt:
+        drv_list = ["gpiod", "smbus2", "spidev"]
+    else:
+        drv_list = ["pyftdi"]
+    for drv in drv_list:
         avail, note = _check_module(drv)
         drivers[drv] = {"available": avail, "note": note}
     special_pins: set[int] = {0, 1}
@@ -1165,14 +1554,27 @@ async def hardware_post(request: web.Request) -> web.Response:
                boot_gpio_config=boot_gpio_config,
                boot_config_path=_BOOT_CONFIG_PATH,
                usable_gpios=sorted(RPI_USABLE_GPIO),
-               drivers=drivers, is_rpi=is_rpi,
+               drivers=drivers, is_rpi=is_rpi, is_alt=is_alt,
+               device_tree_model=device_tree_model,
                special_pins=special_pins,
                ftdi_devices=ftdi_devices)
+    if is_alt:
+        ctx["overlays"] = sorted(set(_scan_overlays()) | set(_scan_user_overlays()))
+        env = _read_armbian_env()
+        ctx["current_overlays"] = env.get("overlays", []) + env.get("user_overlays", [])
+        ctx["overlay_prefix"] = env.get("overlay_prefix", "")
+        ctx["gpio_names"] = _enrich_gpio_names()
+        ctx["gpio_modes"] = cfg.data.get("system", {}).get("gpio_modes", {})
     if result == "NEED_PASSWORD":
         ctx["need_password"] = True
+        if is_alt and has_overlays:
+            ctx["current_overlays"] = sorted(enabled_overlays)
         return aiohttp_jinja2.render_template("hardware.html", request, ctx)
     if result:
         ctx["result"] = result
+        return aiohttp_jinja2.render_template("hardware.html", request, ctx)
+    if is_alt and gpio_result and result is None and not has_overlays:
+        ctx["result"] = gpio_result
         return aiohttp_jinja2.render_template("hardware.html", request, ctx)
     ctx["result"] = "Settings saved. Please reboot from the Tools menu for changes to take effect."
     return aiohttp_jinja2.render_template("hardware.html", request, ctx)
@@ -1572,6 +1974,24 @@ async def pinstates_page(request: web.Request) -> web.Response:
                     })
             usable_count = len([s for s in gpio_states if s["available"]])
             total_count = len(gpio_states)
+        from rpieasy2.core.rpiconst import is_alternative_board
+        if is_alternative_board() and has_native_hw():
+            enriched = _enrich_gpio_names()
+            alt_gpio_states = []
+            for g in enriched:
+                alt_gpio_states.append({
+                    "global_pin": g["global_pin"],
+                    "gpiochip": g["gpiochip"],
+                    "line": g["line"],
+                    "name": g["name"],
+                    "direction": g.get("direction", ""),
+                    "value": g.get("value_str", "?") if g.get("direction") == "Input" else "",
+                    "consumer": g.get("consumer", ""),
+                })
+            return aiohttp_jinja2.render_template("pinstates.html", request,
+                _ctx("Pin States", "tools", gpio_states=gpio_states,
+                     usable_count=usable_count, total_count=total_count,
+                     is_alt=True, alt_gpio_states=alt_gpio_states))
         return aiohttp_jinja2.render_template("pinstates.html", request,
             _ctx("Pin States", "tools", gpio_states=gpio_states,
                  usable_count=usable_count, total_count=total_count))
@@ -1701,23 +2121,25 @@ async def tools_page(request: web.Request) -> web.Response:
     elif cmd == "shutdown":
         _do_shutdown()
         cmd_result = "Shutdown initiated..."
-    elif cmd_input and not cmd:
-        engine = request.app.get("rules_engine")
-        if engine and engine.is_enabled():
-            try:
-                from rpieasy2.core.rules_engine import RuleCommand
-                rc = RuleCommand(cmd_input)
-                if rc.name:
-                    await engine._execute_command(rc, {
-                        "task_values": {}, "vars": engine._vars, "str_vars": engine._str_vars,
-                    })
-                    cmd_result = f"Command executed: {cmd_input}"
-                else:
-                    cmd_result = f"Unable to parse command: {cmd_input}"
-            except Exception as e:
-                cmd_result = f"Command error: {e}"
-        else:
-            cmd_result = "Rules engine is disabled or not available"
+    else:
+        rule_cmd_text = cmd_input or cmd
+        if rule_cmd_text:
+            engine = request.app.get("rules_engine")
+            if engine and engine.is_enabled():
+                try:
+                    from rpieasy2.core.rules_engine import RuleCommand
+                    rc = RuleCommand(rule_cmd_text)
+                    if rc.name:
+                        await engine._execute_command(rc, {
+                            "task_values": {}, "vars": engine._vars, "str_vars": engine._str_vars,
+                        })
+                        cmd_result = f"Command executed: {rule_cmd_text}"
+                    else:
+                        cmd_result = f"Unable to parse command: {rule_cmd_text}"
+                except Exception as e:
+                    cmd_result = f"Command error: {e}"
+            else:
+                cmd_result = "Rules engine is disabled or not available"
     return aiohttp_jinja2.render_template("tools.html", request,
         _ctx("Tools", "tools", cmd_result=cmd_result, cmd_input=cmd_input))
 
@@ -1934,14 +2356,22 @@ async def api_system_restart(request: web.Request) -> web.Response:
     return web.json_response({"status": "ok", "message": "Restarting"})
 
 
-def _do_reboot():
+def _do_reboot(password: str = ""):
     import subprocess
-    subprocess.run(["sudo", "reboot"], check=False)
+    if password:
+        subprocess.run(["sudo", "-S", "reboot"], input=password + "\n",
+                       capture_output=True, text=True, timeout=30)
+    else:
+        subprocess.run(["sudo", "-n", "reboot"], check=False)
 
 
-def _do_shutdown():
+def _do_shutdown(password: str = ""):
     import subprocess
-    subprocess.run(["sudo", "poweroff"], check=False)
+    if password:
+        subprocess.run(["sudo", "-S", "poweroff"], input=password + "\n",
+                       capture_output=True, text=True, timeout=30)
+    else:
+        subprocess.run(["sudo", "-n", "poweroff"], check=False)
 
 
 @_routes.post("/api/system/reboot")
@@ -1951,14 +2381,20 @@ async def api_system_reboot(request: web.Request) -> web.Response:
         body = await request.json()
     except Exception:
         body = {}
-    _do_reboot()
+    password = body.get("password", "") if isinstance(body, dict) else ""
+    _do_reboot(password)
     return web.json_response({"status": "ok", "message": "Rebooting"})
 
 
 @_routes.post("/api/system/shutdown")
 async def api_system_shutdown(request: web.Request) -> web.Response:
     await _require_admin(request)
-    _do_shutdown()
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    password = body.get("password", "") if isinstance(body, dict) else ""
+    _do_shutdown(password)
     return web.json_response({"status": "ok", "message": "Shutting down"})
 
 
@@ -2439,7 +2875,8 @@ async def update_post(request: web.Request) -> web.Response:
                 fname = info.filename
                 if fname.startswith("/") or ".." in fname:
                     continue
-                if fname.endswith(".json") or fname.endswith(".pyc"):
+                base_name = os.path.basename(fname)
+                if base_name == "rpieasy2.json" or fname.endswith(".pyc"):
                     continue
                 if "/__pycache__/" in fname or fname.startswith("__pycache__/"):
                     continue
@@ -2710,6 +3147,17 @@ def _check_module(name: str) -> tuple[bool, str]:
             return True, "Package OK, but I2C is disabled (enable with raspi-config or dtparam=i2c_arm=on)"
         except Exception:
             return False, ""
+    if name == "gpiod":
+        try:
+            import gpiod
+            gpiod.Chip("/dev/gpiochip0")
+            return True, ""
+        except PermissionError:
+            return True, "Package ok, but no permission to access GPIO (add user to gpio group)"
+        except FileNotFoundError:
+            return True, "Package ok, but /dev/gpiochip0 not found (alternative board?)"
+        except Exception as e:
+            return True, f"Package ok, but GPIO init failed: {e}"
     if name == "rpi_ws281x":
         try:
             import rpi_ws281x  # noqa: F401
@@ -2739,52 +3187,28 @@ def _check_deps(deps: list[str]) -> tuple[list[str], list[str], list[str]]:
 
 def _build_gpio_list(cfg) -> list[dict]:
     from rpieasy2.core.hw import has_native_hw
+    from rpieasy2.core.rpiconst import is_alternative_board
     gpio_list: list[dict] = []
     used_pins: set[int] = set()
     for task in cfg.data.get("tasks", []):
         pin = task.get("pin", 0)
         if pin:
             used_pins.add(int(pin))
-    if has_native_hw():
-        boot = _read_boot_config()
-        boot_gpio = _read_boot_gpio_config()
-        special_gpio: dict[int, str] = {
-            0: "I2C0 SDA",
-            1: "I2C0 SCL",
-        }
-        if boot.get("i2c_arm"):
-            special_gpio.update({2: "I2C1 SDA (HAT ID)", 3: "I2C1 SCL (HAT ID)"})
-        if boot.get("spi"):
-            special_gpio.update({8: "SPI0 CE0", 9: "SPI0 MISO", 10: "SPI0 MOSI", 11: "SPI0 SCLK"})
-        if boot.get("spi1"):
-            special_gpio.update({16: "SPI1 CE0", 17: "SPI1 MISO", 18: "SPI1 MOSI", 19: "SPI1 SCLK"})
-        if boot.get("uart"):
-            special_gpio.update({14: "UART TX", 15: "UART RX"})
-        for pin, val in boot_gpio.items():
-            label_map = {"op,dl": "Boot Out Low", "op,dh": "Boot Out High",
-                         "ip,pu": "Boot In Pull-Up", "ip,pd": "Boot In Pull-Down",
-                         "ip,np": "Boot In Float",
-                         "1WIRE": "1-Wire (dtoverlay)"}
-            special_gpio.setdefault(pin, label_map.get(val, f"Boot {val}"))
-        for pin in range(RPI_GPIO_COUNT):
-            available = pin in RPI_USABLE_GPIO
-            in_use = pin in used_pins
-            special = special_gpio.get(pin, "")
-            label = f"GPIO {pin}"
-            if not available:
-                label += " [NOT AVAILABLE]"
+    if is_alternative_board() and has_native_hw() and GPIO_NAMES:
+        for g in GPIO_NAMES:
+            gp = g["global_pin"]
+            in_use = gp in used_pins
+            label = f"GPIO-{gp} {g['name']}"
             if in_use:
                 label += " [IN USE]"
-            if special:
-                label += f" ({special})"
             gpio_list.append({
-                "pin": pin,
+                "pin": gp,
                 "label": label,
-                "available": available,
+                "available": True,
                 "in_use": in_use,
-                "special": special,
+                "special": "",
             })
-    else:
+    elif has_native_hw():
         ftdi_devices = cfg.data.get("system", {}).get("ftdi_devices", [])
         from rpieasy2.core.hw.ftdi import all_reserved_pins, url_identifier
         if ftdi_devices:
@@ -2853,7 +3277,7 @@ _KNOWN_DEPS: dict[str, list[str]] = {
     "p023": ["smbus2"],
     "p024": ["smbus2"],
     "p025": ["smbus2"],
-    "p026": [],
+    "p026": ["psutil"],
     "p027": ["smbus2"],
     "p028": ["smbus2"],
     "p029": ["lgpio"],

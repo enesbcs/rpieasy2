@@ -136,6 +136,34 @@ def _detect_rpi_usable_gpios() -> set[int]:
 RPI_USABLE_GPIO = _detect_rpi_usable_gpios()
 RPI_GPIO_COUNT = max(RPI_USABLE_GPIO) + 1 if RPI_USABLE_GPIO else 28
 
+_IS_ALTERNATIVE_BOARD_CACHE: bool | None = None
+ALTERNATIVE_BOARD_GPIO_COUNT = 256
+
+
+def is_alternative_board() -> bool:
+    global _IS_ALTERNATIVE_BOARD_CACHE
+    if _IS_ALTERNATIVE_BOARD_CACHE is not None:
+        return _IS_ALTERNATIVE_BOARD_CACHE
+    if is_raspberry_pi():
+        _IS_ALTERNATIVE_BOARD_CACHE = False
+        return False
+    try:
+        with open("/etc/os-release") as f:
+            os_release = f.read()
+        if "armbian" not in os_release.lower():
+            _IS_ALTERNATIVE_BOARD_CACHE = False
+            return False
+    except Exception:
+        _IS_ALTERNATIVE_BOARD_CACHE = False
+        return False
+    try:
+        with open("/proc/device-tree/model") as f:
+            model = f.read().strip("\x00").strip().lower()
+        _IS_ALTERNATIVE_BOARD_CACHE = "radxa" in model or "orange" in model
+    except Exception:
+        _IS_ALTERNATIVE_BOARD_CACHE = False
+    return _IS_ALTERNATIVE_BOARD_CACHE
+
 RPI_SPECIAL_GPIO: dict[int, str] = {
     0: "I2C0 SDA",
     1: "I2C0 SCL",
@@ -798,7 +826,7 @@ UOM_AH = 168
 # --- System / Default constants ---
 
 BUILD_EPOCH = datetime(1967, 4, 29)
-BUILD = 21595
+BUILD = 21596
 
 
 def build_to_date_str(build: int) -> str:

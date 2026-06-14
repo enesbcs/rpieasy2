@@ -5,7 +5,11 @@ import logging
 import time
 from typing import Any
 
-import psutil
+try:
+    import psutil
+    HAS_PSUTIL = True
+except ImportError:
+    HAS_PSUTIL = False
 
 from rpieasy2.core.events import Event
 from rpieasy2.core.plugin_base import PluginBase
@@ -78,8 +82,10 @@ async def _get_sensor_value(value_id: int) -> str:
             return f"{days}d {hours:02d}h {minutes:02d}m"
         return f"{hours:02d}h{minutes:02d}m"
     if value_id == 1:
-        mem = psutil.virtual_memory()
-        return f"{mem.available // 1024} kB"
+        if HAS_PSUTIL:
+            mem = psutil.virtual_memory()
+            return f"{mem.available // 1024} kB"
+        return "-"
     if value_id == 2:
         from rpieasy2.core.util import get_wifi_rssi, get_wifi_ssid_async
         rssi_raw = get_wifi_rssi()
@@ -91,10 +97,14 @@ async def _get_sensor_value(value_id: int) -> str:
             rssi += f" ({ssid})"
         return rssi
     if value_id == 3:
-        return f"{psutil.cpu_percent(interval=0)} [%]"
+        if HAS_PSUTIL:
+            return f"{psutil.cpu_percent(interval=0)} [%]"
+        return "-"
     if value_id == 4:
-        load = psutil.getloadavg()
-        return f"{load[0]:.2f}"
+        if HAS_PSUTIL:
+            load = psutil.getloadavg()
+            return f"{load[0]:.2f}"
+        return "-"
     if value_id in (5, 6, 7, 8, 9):
         ip = get_local_ip()
         if ip == "-":
@@ -111,15 +121,20 @@ async def _get_sensor_value(value_id: int) -> str:
         if value_id == 9:
             return ip
     if value_id == 10:
-        mem = psutil.virtual_memory()
-        free = mem.available
-        return f"{free} B"
+        if HAS_PSUTIL:
+            mem = psutil.virtual_memory()
+            return f"{mem.available} B"
+        return "-"
     if value_id == 11:
         return ""
     if value_id == 12:
-        return f"{psutil.cpu_percent(interval=0)} [%]"
+        if HAS_PSUTIL:
+            return f"{psutil.cpu_percent(interval=0)} [%]"
+        return "-"
     if value_id == 13:
-        return f"{psutil.cpu_percent(interval=0)} [%]"
+        if HAS_PSUTIL:
+            return f"{psutil.cpu_percent(interval=0)} [%]"
+        return "-"
     if value_id == 14:
         try:
             with open("/sys/class/thermal/thermal_zone0/temp") as f:
@@ -128,11 +143,17 @@ async def _get_sensor_value(value_id: int) -> str:
         except Exception:
             return "-"
     if value_id == 15:
-        return f"{psutil.getloadavg()[0]:.2f}"
+        if HAS_PSUTIL:
+            return f"{psutil.getloadavg()[0]:.2f}"
+        return "-"
     if value_id == 16:
-        return f"{psutil.getloadavg()[1]:.2f}"
+        if HAS_PSUTIL:
+            return f"{psutil.getloadavg()[1]:.2f}"
+        return "-"
     if value_id == 17:
-        return f"{psutil.getloadavg()[2]:.2f}"
+        if HAS_PSUTIL:
+            return f"{psutil.getloadavg()[2]:.2f}"
+        return "-"
     if value_id == 18:
         import socket
         return socket.gethostname()
@@ -144,16 +165,22 @@ async def _get_sensor_value_raw(value_id: int):
     if value_id == 0:
         return None
     if value_id == 1:
-        mem = psutil.virtual_memory()
-        return int(mem.available)
+        if HAS_PSUTIL:
+            mem = psutil.virtual_memory()
+            return int(mem.available)
+        return None
     if value_id == 2:
         from rpieasy2.core.util import get_wifi_rssi
         return get_wifi_rssi()
     if value_id in (3, 12, 13):
-        return float(psutil.cpu_percent(interval=0))
+        if HAS_PSUTIL:
+            return float(psutil.cpu_percent(interval=0))
+        return None
     if value_id == 4:
-        load = psutil.getloadavg()
-        return float(load[0])
+        if HAS_PSUTIL:
+            load = psutil.getloadavg()
+            return float(load[0])
+        return None
     if value_id in (5, 6, 7, 8):
         ip = get_local_ip()
         if ip == "-":
@@ -167,8 +194,10 @@ async def _get_sensor_value_raw(value_id: int):
         ip = get_local_ip()
         return ip
     if value_id == 10:
-        mem = psutil.virtual_memory()
-        return int(mem.available)
+        if HAS_PSUTIL:
+            mem = psutil.virtual_memory()
+            return int(mem.available)
+        return None
     if value_id == 14:
         try:
             with open("/sys/class/thermal/thermal_zone0/temp") as f:

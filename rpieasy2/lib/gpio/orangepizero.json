@@ -1,0 +1,27 @@
+{
+  "board": "Orange Pi Zero",
+  "soc": "Allwinner H2+",
+  "gpiochips": {
+    "gpiochip0": { "controller": "pio", "ports": ["PA","PB","PC","PD","PE","PF","PG"] },
+    "gpiochip1": { "controller": "r_pio", "ports": ["PL"] }
+  },
+  "pins": [
+    { "gpio_name": "PA12", "gpiochip": 0, "line": 12, "physical_pin": 3 },
+    { "gpio_name": "PA11", "gpiochip": 0, "line": 11, "physical_pin": 5 },
+    { "gpio_name": "PA6", "gpiochip": 0, "line": 6, "physical_pin": 7 },
+    { "gpio_name": "PG6", "gpiochip": 0, "line": 198, "physical_pin": 8 },
+    { "gpio_name": "PG7", "gpiochip": 0, "line": 199, "physical_pin": 10 },
+    { "gpio_name": "PA1", "gpiochip": 0, "line": 1, "physical_pin": 11 },
+    { "gpio_name": "PA7", "gpiochip": 0, "line": 7, "physical_pin": 12 },
+    { "gpio_name": "PA0", "gpiochip": 0, "line": 0, "physical_pin": 13 },
+    { "gpio_name": "PA3", "gpiochip": 0, "line": 3, "physical_pin": 15 },
+    { "gpio_name": "PA19", "gpiochip": 0, "line": 19, "physical_pin": 16 },
+    { "gpio_name": "PA18", "gpiochip": 0, "line": 18, "physical_pin": 18 },
+    { "gpio_name": "PA15", "gpiochip": 0, "line": 15, "physical_pin": 19 },
+    { "gpio_name": "PA16", "gpiochip": 0, "line": 16, "physical_pin": 21 },
+    { "gpio_name": "PA2", "gpiochip": 0, "line": 2, "physical_pin": 22 },
+    { "gpio_name": "PA14", "gpiochip": 0, "line": 14, "physical_pin": 23 },
+    { "gpio_name": "PA13", "gpiochip": 0, "line": 13, "physical_pin": 24 },
+    { "gpio_name": "PA10", "gpiochip": 0, "line": 10, "physical_pin": 26 }
+  ]
+}

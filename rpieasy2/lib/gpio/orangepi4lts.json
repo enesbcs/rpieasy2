@@ -1,0 +1,30 @@
+{
+  "board": "Orange Pi 4 LTS",
+  "soc": "Rockchip RK3399",
+  "gpiochips": {
+    "gpiochip0": { "controller": "GPIO0", "ports": ["A","B","C","D"] },
+    "gpiochip1": { "controller": "GPIO1", "ports": ["A","B","C","D"] },
+    "gpiochip2": { "controller": "GPIO2", "ports": ["A","B","C","D"] },
+    "gpiochip3": { "controller": "GPIO3", "ports": ["A","B","C","D"] },
+    "gpiochip4": { "controller": "GPIO4", "ports": ["A","B","C","D"] }
+  },
+  "pins": [
+    { "gpio_name": "GPIO1_A1", "gpiochip": 1, "line": 33 },
+    { "gpio_name": "GPIO1_A3", "gpiochip": 1, "line": 35 },
+    { "gpio_name": "GPIO1_A7", "gpiochip": 1, "line": 39 },
+    { "gpio_name": "GPIO1_B0", "gpiochip": 1, "line": 40 },
+    { "gpio_name": "GPIO1_B1", "gpiochip": 1, "line": 41 },
+    { "gpio_name": "GPIO1_B2", "gpiochip": 1, "line": 42 },
+    { "gpio_name": "GPIO1_C2", "gpiochip": 1, "line": 50 },
+    { "gpio_name": "GPIO1_C4", "gpiochip": 1, "line": 52 },
+    { "gpio_name": "GPIO1_C5", "gpiochip": 1, "line": 53 },
+    { "gpio_name": "GPIO1_C6", "gpiochip": 1, "line": 54 },
+    { "gpio_name": "GPIO1_C7", "gpiochip": 1, "line": 55 },
+    { "gpio_name": "GPIO1_D0", "gpiochip": 1, "line": 56 },
+    { "gpio_name": "GPIO2_D4", "gpiochip": 2, "line": 92 },
+    { "gpio_name": "GPIO4_C0", "gpiochip": 4, "line": 144 },
+    { "gpio_name": "GPIO4_C1", "gpiochip": 4, "line": 145 },
+    { "gpio_name": "GPIO4_C5", "gpiochip": 4, "line": 149 },
+    { "gpio_name": "GPIO4_C6", "gpiochip": 4, "line": 150 }
+  ]
+}

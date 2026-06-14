@@ -1,0 +1,27 @@
+{
+  "board": "Orange Pi 3 LTS",
+  "soc": "Allwinner H6",
+  "gpiochips": {
+    "gpiochip0": { "controller": "r_pio", "ports": ["PL"] },
+    "gpiochip1": { "controller": "pio", "ports": ["PA","PB","PC","PD","PE","PF","PG","PH"] }
+  },
+  "pins": [
+    { "gpio_name": "PD15", "gpiochip": 1, "line": 111 },
+    { "gpio_name": "PD16", "gpiochip": 1, "line": 112 },
+    { "gpio_name": "PD18", "gpiochip": 1, "line": 114 },
+    { "gpio_name": "PD21", "gpiochip": 1, "line": 117 },
+    { "gpio_name": "PD22", "gpiochip": 1, "line": 118 },
+    { "gpio_name": "PD23", "gpiochip": 1, "line": 119 },
+    { "gpio_name": "PD24", "gpiochip": 1, "line": 120 },
+    { "gpio_name": "PD25", "gpiochip": 1, "line": 121 },
+    { "gpio_name": "PD26", "gpiochip": 1, "line": 122 },
+    { "gpio_name": "PH3", "gpiochip": 1, "line": 227 },
+    { "gpio_name": "PH4", "gpiochip": 1, "line": 228 },
+    { "gpio_name": "PH5", "gpiochip": 1, "line": 229 },
+    { "gpio_name": "PH6", "gpiochip": 1, "line": 230 },
+    { "gpio_name": "PL2", "gpiochip": 0, "line": 2 },
+    { "gpio_name": "PL3", "gpiochip": 0, "line": 3 },
+    { "gpio_name": "PL8", "gpiochip": 0, "line": 8 },
+    { "gpio_name": "PL10", "gpiochip": 0, "line": 10 }
+  ]
+}

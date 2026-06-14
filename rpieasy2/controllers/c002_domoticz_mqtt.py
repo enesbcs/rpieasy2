@@ -11,6 +11,7 @@ from rpieasy2.core.config import get_config
 from rpieasy2.core.controller_base import ControllerBase
 from rpieasy2.core.events import Event, get_event_bus
 from rpieasy2.core.rpiconst import DEFAULT_MQTT_PORT
+from rpieasy2.core.rules_engine import RuleCommand, get_rules_engine
 from rpieasy2.core.system_vars import resolve_controller_template
 
 logger = logging.getLogger("rpieasy2.controller.c002")
@@ -34,6 +35,7 @@ class C002DomoticzMQTT(ControllerBase):
         self._ctrl_config: dict[str, Any] = {}
         self._pending_subscriptions: list[str] = ["domoticz/out"]
         self._controller_index: int | None = None
+        self._cmd_sub_topic: str | None = None
 
     async def on_controller_init(self, event: Event) -> bool | None:
         config: dict[str, Any] = event.data.get("controller_config", {})
@@ -42,6 +44,12 @@ class C002DomoticzMQTT(ControllerBase):
             self._controller_index = int(event.controller_index)
         except Exception:
             self._controller_index = None
+        self._cmd_sub_topic = None
+        if config.get("enable_cmd_subscription"):
+            topic = resolve_controller_template("%sysname%/cmd", controller_config=config)
+            self._cmd_sub_topic = topic
+            if topic not in self._pending_subscriptions:
+                self._pending_subscriptions.append(topic)
         if config.get("controllerenabled", config.get("enabled", True)):
             asyncio.create_task(self._run_client_loop())
         else:
@@ -106,6 +114,16 @@ class C002DomoticzMQTT(ControllerBase):
         async for msg in self._client.messages:
             topic = msg.topic.value
             payload = msg.payload.decode().strip()
+            if self._cmd_sub_topic and topic == self._cmd_sub_topic:
+                if payload:
+                    engine = get_rules_engine()
+                    if engine and engine.is_enabled():
+                        rc = RuleCommand(payload)
+                        if rc.name:
+                            await engine._execute_command(rc, {
+                                "task_values": {}, "vars": engine._vars, "str_vars": engine._str_vars,
+                            })
+                continue
             if topic == "domoticz/out":
                 await self._handle_domoticz_command(payload)
 

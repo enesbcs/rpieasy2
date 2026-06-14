@@ -53,7 +53,7 @@ class P001Switch(PluginBase):
                         task["TDE"] = False
                         cfg.set_task(event.task_index, task)
                         cfg.save()
-                        await get_event_bus().publish(Event(type="TASK_CONFIG_CHANGED", task_index=event.task_index, data={"task_config": task}))
+                        await get_event_bus().publish(Event(type="TASK_CONFIG_CHANGED", task_index=self._task_index, data={"task_config": task}))
                 except Exception:
                     logger.exception("Failed to disable task after GPIO init error")
                 return False
@@ -113,7 +113,7 @@ class P001Switch(PluginBase):
                     self._last_click_time = now
                     if self._click_count >= 2:
                         self._click_count = 0
-                        ev = Event(type="PLUGIN_GPIO_CHANGE", task_index=event.task_index, data={"state": state})
+                        ev = Event(type="PLUGIN_GPIO_CHANGE", task_index=self._task_index, data={"state": state})
                         await get_event_bus().publish(ev)
                 return None
 
@@ -125,7 +125,7 @@ class P001Switch(PluginBase):
                     self._is_pressing = False
                     press_dur = (now - self._press_start) * 1000.0
                     if press_dur >= lp_min_ms:
-                        ev = Event(type="PLUGIN_GPIO_CHANGE", task_index=event.task_index, data={"state": state, "long_press": True})
+                        ev = Event(type="PLUGIN_GPIO_CHANGE", task_index=self._task_index, data={"state": state, "long_press": True})
                         await get_event_bus().publish(ev)
                         return None
 
@@ -135,16 +135,16 @@ class P001Switch(PluginBase):
                     self._last_click_time = now
                     if self._click_count >= 2:
                         self._click_count = 0
-                        ev = Event(type="PLUGIN_GPIO_CHANGE", task_index=event.task_index, data={"state": state, "double_click": True})
+                        ev = Event(type="PLUGIN_GPIO_CHANGE", task_index=self._task_index, data={"state": state, "double_click": True})
                         await get_event_bus().publish(ev)
                 else:
                     if self._click_count == 1 and (now - self._last_click_time) * 1000.0 > dc_max_ms:
                         self._click_count = 0
-                        ev = Event(type="PLUGIN_GPIO_CHANGE", task_index=event.task_index, data={"state": state})
+                        ev = Event(type="PLUGIN_GPIO_CHANGE", task_index=self._task_index, data={"state": state})
                         await get_event_bus().publish(ev)
                 return None
 
-            ev = Event(type="PLUGIN_GPIO_CHANGE", task_index=event.task_index, data={"state": state})
+            ev = Event(type="PLUGIN_GPIO_CHANGE", task_index=self._task_index, data={"state": state})
             await get_event_bus().publish(ev)
         return None
 

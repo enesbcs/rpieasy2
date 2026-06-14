@@ -1,0 +1,27 @@
+{
+  "board": "Orange Pi Zero 3",
+  "soc": "H618",
+  "gpiochips": {
+    "gpiochip0": { "controller": "r_pio", "ports": ["PL"] },
+    "gpiochip1": { "controller": "pio", "ports": ["PA","PB","PC","PD","PE","PF","PG","PH","PI"] }
+  },
+  "pins": [
+    { "gpio_name": "PC5", "gpiochip": 1, "line": 69 },
+    { "gpio_name": "PC6", "gpiochip": 1, "line": 70 },
+    { "gpio_name": "PC7", "gpiochip": 1, "line": 71 },
+    { "gpio_name": "PC8", "gpiochip": 1, "line": 72 },
+    { "gpio_name": "PC9", "gpiochip": 1, "line": 73 },
+    { "gpio_name": "PC10", "gpiochip": 1, "line": 74 },
+    { "gpio_name": "PC11", "gpiochip": 1, "line": 75 },
+    { "gpio_name": "PC14", "gpiochip": 1, "line": 78 },
+    { "gpio_name": "PC15", "gpiochip": 1, "line": 79 },
+    { "gpio_name": "PH2", "gpiochip": 1, "line": 226 },
+    { "gpio_name": "PH3", "gpiochip": 1, "line": 227 },
+    { "gpio_name": "PH4", "gpiochip": 1, "line": 228 },
+    { "gpio_name": "PH5", "gpiochip": 1, "line": 229 },
+    { "gpio_name": "PH6", "gpiochip": 1, "line": 230 },
+    { "gpio_name": "PH7", "gpiochip": 1, "line": 231 },
+    { "gpio_name": "PH8", "gpiochip": 1, "line": 232 },
+    { "gpio_name": "PH9", "gpiochip": 1, "line": 233 }
+  ]
+}

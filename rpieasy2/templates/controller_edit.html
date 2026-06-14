@@ -110,6 +110,10 @@ function dept_onchange(form) { form.submit(); }
     {% endif %}
     {% if ctrl_flags.usesMQTT %}
     <TR><TD colspan=2><H3>MQTT</H3></TD></TR>
+    <TR id='tr_enablecmdsubscription'><TD>Enable Command Subscription:</td><TD>
+    <label class='container'>&nbsp;<input type='checkbox' name='enable_cmd_subscription' {{ 'checked' if ctrl_config.get("enable_cmd_subscription") else '' }}><span class='checkmark'></span></label>
+    <div class='note'>(subscribes to %sysname%/cmd for RuleCommand execution)</div>
+    </TD></TR>
     <TR id='tr_controllerclientid'><TD>Controller Client ID:</td><TD>
     <input class='wide' type='search' name='controllerclientid' maxlength=64 value='{{ ctrl_config.get("controllerclientid") or ctrl_config.get("client_id") or ctrl_defaults.get("controllerclientid", "") }}'>
     </TD></TR>

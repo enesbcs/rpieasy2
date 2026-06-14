@@ -1,6 +1,10 @@
 {% extends "base.html" %}
 {% block content %}
+{% if is_alt %}
+<form id='overlay-form' method='POST'>
+{% else %}
 <form id='hardware-form' method='POST'>
+{% endif %}
 <table class='normal'>
     <TR><TH colspan='2'>Hardware Configuration</TH></TR>
     <TR><TH colspan='2' style='background:#555;'>Drivers</TH></TR>
@@ -18,8 +22,15 @@
     {%- if note %} <span class='note'>{{ note }}</span>{% endif %}
     </TD></TR>
     {% endmacro %}
+    {% if device_tree_model %}
+    <TR><TD nowrap>Device Tree Model:</TD><TD>{{ device_tree_model }}</TD></TR>
+    {% endif %}
     {% if is_rpi %}
     {{ driver_row("GPIO Driver", "lgpio", "(recommended on Raspberry Pi)") }}
+    {{ driver_row("I2C Driver", "smbus2", "") }}
+    {{ driver_row("SPI Driver", "spidev", "") }}
+    {% elif is_alt %}
+    {{ driver_row("GPIO Driver", "gpiod", "(recommended on Radxa/Orange Pi)") }}
     {{ driver_row("I2C Driver", "smbus2", "") }}
     {{ driver_row("SPI Driver", "spidev", "") }}
     {% else %}
@@ -53,9 +64,30 @@
         <label class='container'><input type='checkbox' name='pwm' value='1'{{ ' checked' if boot_config.get("pwm") else '' }}><span class='checkmark'></span></label>
         <span class='note'>(dtoverlay=pwm-2chan) DISABLE for NeoPixel!</span>
     </TD></TR>
+    {% elif is_alt %}
+    <TR><TD colspan='2'><hr></TD></TR>
+    <TR><TH colspan='2' style='background:#555;'>Interface Enable (/boot/armbianEnv.txt)</TH></TR>
+    <TR><TD colspan='2'>Overlays from /boot/overlays/ (prefix: {{ overlay_prefix }}). Changes take effect after reboot.</TD></TR>
+    {% for ov in overlays %}
+    <TR><TD nowrap>{{ ov }}:</TD><TD nowrap>
+        <label class='container'><input type='checkbox' name='overlay_{{ ov }}' value='1'{{ ' checked' if ov in current_overlays else '' }}><span class='checkmark'></span></label>
+    </TD></TR>
+    {% endfor %}
     {% endif %}
 </table>
 <BR>
+{% if is_alt %}
+<button type='submit' class='button'>Save Overlays</button>
+<a class='button link' href='/hardware'>Cancel</a>
+{% if need_password %}
+<div style='margin-top:10px;padding:10px;background:#c0392b;color:white;border-radius:5px;'>
+    <strong>Sudo Password Required</strong><BR>
+    <input type='password' name='password' required style='width:200px;margin-top:5px;'>
+</div>
+{% endif %}
+</form>
+<form id='gpio-form' method='POST' style='margin-top:20px;'>
+{% endif %}
 {% if is_rpi %}
 <table class='normal'>
     <TR><TH colspan='3'>GPIO Boot State (gpio= in config.txt)</TH></TR>
@@ -86,7 +118,34 @@
 <BR>
 <button type='submit' class='button'>Save</button>
 <a class='button link' href='/hardware'>Cancel</a>
-{% else %}
+{% elif is_alt %}
+<table class='normal'>
+    <TR><TH colspan='6'>GPIO List ({{ gpio_names | length }} named)</TH></TR>
+    <TR><TH>Global GPIO</TH><TH>GPIO Chip</TH><TH>Line</TH><TH>GPIO Name</TH><TH>Direction active</TH><TH>Mode</TH></TR>
+    {% set gpio_modes = gpio_modes or {} %}
+    {% for g in gpio_names %}
+    <TR>
+        <TD style='text-align:center;font-weight:bold;'>{{ g.global_pin }}</TD>
+        <TD style='text-align:center;'>{{ g.gpiochip }}</TD>
+        <TD style='text-align:center;'>{{ g.line }}</TD>
+        <TD>{{ g.name }}</TD>
+        <TD>{{ g.direction if g.direction else '-' }}</TD>
+        <TD>
+            <select name='gpio_mode_{{ g.global_pin }}'>
+                <option value='none'{{ ' selected' if gpio_modes.get(g.global_pin|string) is none or gpio_modes.get(g.global_pin|string) == 'none' else '' }}>None</option>
+                <option value='input'{{ ' selected' if gpio_modes.get(g.global_pin|string) == 'input' else '' }}>Input</option>
+                <option value='input_pullup'{{ ' selected' if gpio_modes.get(g.global_pin|string) == 'input_pullup' else '' }}>Input-pullup</option>
+                <option value='input_pulldown'{{ ' selected' if gpio_modes.get(g.global_pin|string) == 'input_pulldown' else '' }}>Input-pulldown</option>
+                <option value='output'{{ ' selected' if gpio_modes.get(g.global_pin|string) == 'output' else '' }}>Output</option>
+            </select>
+        </TD>
+    </TR>
+    {% endfor %}
+</table>
+<BR>
+    <button type='submit' class='button'>Save GPIO Modes</button>
+    <a class='button link' href='/hardware'>Cancel</a>
+    {% elif not is_alt %}
 <div id='ftdi_section'>
 <h3>FTDI Devices</h3>
 <div id='ftdi_status'>Scanning for FTDI devices...</div>
@@ -100,6 +159,18 @@
 {% if result %}<p>{{ result }}</p>{% endif %}
 
 <script>
+{% if need_password %}
+(function() {
+    var pwd = document.querySelector('#overlay-form input[name="password"]');
+    if (pwd) {
+        pwd.addEventListener('keydown', function(e) {
+            if (e.key === 'Enter' && this.value.length > 0) {
+                this.form.submit();
+            }
+        });
+    }
+})();
+{% endif %}
 function computeReserved(mpsseChannels, portWidth) {
     var reserved = [];
     var base = 0;
@@ -406,7 +477,7 @@ function saveFtdiConfig() {
     });
 }
 document.addEventListener('DOMContentLoaded', function() {
-    {% if not is_rpi %}
+    {% if not is_rpi and not is_alt %}
     if (document.getElementById('ftdi_section')) {
         loadFtdiDevices();
     }

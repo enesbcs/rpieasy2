@@ -135,8 +135,7 @@ def resolve_system_var(name: str) -> str:
         bssid = get_wifi_bssid()
         return bssid if bssid else "-"
     if n in ("cpu_load", "sysload"):
-        import psutil
-        return f"{psutil.getloadavg()[0]:.2f}"
+        return f"{os.getloadavg()[0]:.2f}"
     if n == "cpu_temp":
         try:
             with open("/sys/class/thermal/thermal_zone0/temp") as f:
@@ -155,24 +154,12 @@ def resolve_system_var(name: str) -> str:
         import platform
         return platform.processor() or "-"
     if n == "cpu_cores":
-        try:
-            import psutil
-            return str(psutil.cpu_count())
-        except Exception:
-            pass
         return str(os.cpu_count() or 0)
     if n in ("cpu_freq", "cpu_frequency"):
         try:
             with open("/sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq") as f:
                 khz = int(f.read().strip())
                 return f"{khz / 1000:.0f} MHz"
-        except Exception:
-            pass
-        try:
-            import psutil
-            freq = psutil.cpu_freq()
-            if freq:
-                return f"{freq.current:.0f} MHz"
         except Exception:
             pass
         return "-"

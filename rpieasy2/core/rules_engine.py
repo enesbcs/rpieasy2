@@ -30,7 +30,16 @@ class RuleCommand:
     def _parse(self) -> None:
         if not self.raw:
             return
-        parts = self._split_args(self.raw)
+        text = self.raw
+        if " " in text and "," in text:
+            fsp = text.find(" ")
+            fco = text.find(",")
+            if fsp < fco:
+                self.name = text[:fsp].strip().lower()
+                rest = text[fsp + 1 :].strip()
+                self.args = [p.strip() for p in self._split_args(rest)]
+                return
+        parts = self._split_args(text)
         if parts:
             self.name = parts[0].strip().lower()
             self.args = [p.strip() for p in parts[1:]]
@@ -509,16 +518,6 @@ class RulesEngine:
                             target_ti = ti
                             break
                 if target_ti is not None:
-                    from rpieasy2.core.config import get_config
-                    cfg_sys = get_config().data.get("system", {})
-                    allow_all = cfg_sys.get("allow_taskvalueset_on_all_plugins", False)
-                    if not allow_all:
-                        tc = self._task_configs.get(target_ti, {})
-                        plugin_id = int(tc.get("plugin_id", tc.get("plugin", 0)))
-                        if plugin_id != 33:
-                            logger.warning(f"TaskValueSet not allowed on plugin {plugin_id} "
-                                           f"(enable 'Allow TaskValueSet on all plugins' in Advanced settings)")
-                            return
                     vnames: list[str] | None = None
                     if target_ti in self._task_values:
                         vnames = list(self._task_values[target_ti].keys())
@@ -537,6 +536,7 @@ class RulesEngine:
                         if name == "taskvaluesetandrun":
                             read_ev = Event(type="PLUGIN_READ", task_index=target_ti, data={
                                 "task_config": self._task_configs.get(target_ti, {}),
+                                "values": {vk: value},
                             })
                             await self._event_bus.publish(read_ev)
 
@@ -1112,7 +1112,7 @@ class RulesEngine:
                             "message": event_name,
                         })
                         await self._event_bus.publish(ev)
-                        payload = f"command={event_name}".encode()
+                        payload = event_name.encode()
                         p2p_sendto(payload, node["ip"])
                     else:
                         logger.warning(f"sendto: unit {dest_unit} not found in P2P nodes")
@@ -1529,3 +1529,16 @@ class RulesEngine:
 
     def to_storage_format(self, rule_sets: list[dict[str, Any]]) -> list[dict[str, Any]]:
         return rule_sets
+
+
+_RULES_ENGINE_INSTANCE: RulesEngine | None = None
+
+
+def get_rules_engine() -> RulesEngine | None:
+    global _RULES_ENGINE_INSTANCE
+    return _RULES_ENGINE_INSTANCE
+
+
+def set_rules_engine(engine: RulesEngine | None) -> None:
+    global _RULES_ENGINE_INSTANCE
+    _RULES_ENGINE_INSTANCE = engine

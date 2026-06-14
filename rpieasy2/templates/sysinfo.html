@@ -40,6 +40,8 @@
     <TR><TD>CPU Cores:</TD><TD>{{ sysinfo.cpu_cores }}</TD></TR>
     {% if sysinfo.rpi_model %}
     <TR><TD>RPi Model:</TD><TD>{{ sysinfo.rpi_model }}</TD></TR>
+    {% elif sysinfo.device_tree_model %}
+    <TR><TD>Board Model:</TD><TD>{{ sysinfo.device_tree_model }}</TD></TR>
     {% endif %}
     {% if sysinfo.board_vendor %}
     <TR><TD>Board Vendor:</TD><TD>{{ sysinfo.board_vendor }}</TD></TR>

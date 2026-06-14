@@ -27,11 +27,11 @@ class _StubGPIO(GPIOManager):
             self._log.warning(msg, pin)
 
     def read(self, pin: int) -> int:
-        self._warn_once(pin, "GPIO not available (install lgpio), cannot read pin %d")
+        self._warn_once(pin, "GPIO not available (install lgpio or gpiod), cannot read pin %d")
         return 0
 
     def write(self, pin: int, value: int) -> None:
-        self._warn_once(pin, "GPIO not available (install lgpio), cannot write pin %d")
+        self._warn_once(pin, "GPIO not available (install lgpio or gpiod), cannot write pin %d")
 
     def claim_output(self, pin: int) -> None:
         # claiming isn't meaningful in the stub
@@ -177,7 +177,15 @@ def _native_gpio() -> GPIOManager:
         _HAS_NATIVE = True
         return inst
     except Exception:
-        logger.warning("lgpio not available, GPIO operations will be stubs (install: pip install lgpio)")
+        logger.warning("lgpio not available, trying gpiod (alternative board)...")
+    try:
+        from rpieasy2.core.hw.gpiod_gpio import GpiodGPIOManager
+        inst = GpiodGPIOManager()
+        _HAS_NATIVE = True
+        logger.info("gpiod based GPIO manager initialized")
+        return inst
+    except Exception:
+        logger.warning("gpiod not available either, GPIO operations will be stubs (install: pip install gpiod)")
         return _StubGPIO()
 
 

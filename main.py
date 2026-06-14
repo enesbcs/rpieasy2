@@ -14,7 +14,7 @@ from rpieasy2.core.events import Event, get_event_bus
 from rpieasy2.core.hw import create_hw_manager, detect_ftdi, has_native_hw
 from rpieasy2.core.logger import setup_logging
 from rpieasy2.core.rpiconst import BACKUP_WEB_PORT, DEFAULT_TASK_INTERVAL, DEFAULT_WEB_PORT, PERIODIC_TICK_INTERVAL
-from rpieasy2.core.rules_engine import RulesEngine
+from rpieasy2.core.rules_engine import RulesEngine, set_rules_engine
 from rpieasy2.core.system_vars import LIVE_TASK_NAMES, LIVE_TASK_VALUES, set_start_time
 from rpieasy2.core.scheduler import Scheduler
 from rpieasy2.core.webserver import (
@@ -23,7 +23,9 @@ from rpieasy2.core.webserver import (
     _lazy_load_plugin,
     _notifier_info,
     _plugin_info,
+    GPIO_NAMES,
     create_app,
+    load_gpio_names,
     subscribe_plugin_read,
 )
 
@@ -264,6 +266,24 @@ async def main():
     _hw_manager = hw
     hw_label = "FTDI" if use_ftdi else ("native RPi" if has_native_hw() else "Generic PC")
     logger.info(f"Hardware: {hw_label}")
+    if has_native_hw() and not use_ftdi:
+        from rpieasy2.core.rpiconst import is_raspberry_pi
+        if not is_raspberry_pi():
+            load_gpio_names()
+            logger.info(f"GPIO_NAMES loaded: {len(GPIO_NAMES)} entries")
+            gpio_modes = cfg.data.get("system", {}).get("gpio_modes", {})
+            if gpio_modes and hasattr(hw, "gpio") and hasattr(hw.gpio, "set_pin_mode"):
+                for pin_str, mode in gpio_modes.items():
+                    try:
+                        hw.gpio.set_pin_mode(int(pin_str), mode)
+                    except Exception as e:
+                        logger.warning("Failed to set pin mode for %s: %s", pin_str, e)
+                if hasattr(hw.gpio, "apply_pin_modes"):
+                    try:
+                        hw.gpio.apply_pin_modes()
+                    except Exception as e:
+                        logger.warning("apply_pin_modes failed: %s", e)
+                logger.info("GPIO modes applied: %d", len(gpio_modes))
     _log_boot("hw manager created")
 
     base_dir = os.path.dirname(__file__)
@@ -288,6 +308,7 @@ async def main():
     _rules_engine.load_rules(cfg.get_rules())
     _rules_engine.set_enabled(rules_enabled)
     app["rules_engine"] = _rules_engine
+    set_rules_engine(_rules_engine)
     logger.info(f"Rules engine: {'enabled' if rules_enabled else 'disabled'} ({len(cfg.get_rules())} rule sets)")
     _log_boot("rules engine ready")
 
