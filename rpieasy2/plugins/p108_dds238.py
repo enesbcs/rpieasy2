@@ -14,6 +14,18 @@ logger = logging.getLogger("rpieasy2.plugin.p108")
 
 P108_NR_OUTPUT_VALUES = 4
 
+# Supported meter variants (register maps)
+P108_MODEL_ZN_FLOAT = 0   # DDS238-x ZN: IEEE754 float32 measurement registers
+P108_MODEL_ZNS_INT = 1    # DDS238-2 ZN/S: uint16/i16 measurement registers
+P108_MODELS = {
+    P108_MODEL_ZN_FLOAT: "DDS238-x ZN (float32 registers)",
+    P108_MODEL_ZNS_INT: "DDS238-2 ZN/S (uint16 registers)",
+}
+
+# Both register maps cover 0x0000..0x0011, so a single read serves all values
+P108_FIRST_REG = 0x0000
+P108_REG_COUNT = 18
+
 P108_QUERIES = {
     0: "V",
     1: "A",
@@ -25,6 +37,13 @@ P108_QUERIES = {
     7: "PF",
     8: "F",
 }
+P108_QUERY_LIST = list(P108_QUERIES)
+
+try:
+    import serial as _pyserial
+    _SERIAL_ERRORS: tuple = (_pyserial.SerialException, OSError)
+except ImportError:  # pragma: no cover - pyserial is a hard requirement for this plugin
+    _SERIAL_ERRORS = (OSError,)
 
 
 def _modbus_crc(data: bytes) -> int:
@@ -60,31 +79,31 @@ class P108DDS238(PluginBase):
         self._serial = None
         self._addr: int = 1
         self._baud: int = 9600
-        self._model: int = 0
+        self._model: int = P108_MODEL_ZN_FLOAT
         self._de_pin: int = -1
         self._port: str = "/dev/ttyAMA0"
         self._query_config: list[int] = [0, 1, 2, 5]
+        # Serial access lock: prevents closing the port while a read is in flight
+        # (closing sets the underlying fd to None and an in-flight os.write raises
+        # "'NoneType' object cannot be interpreted as an integer")
+        self._io_lock = asyncio.Lock()
+
+    @staticmethod
+    def _safe_int(value: Any, default: int) -> int:
+        try:
+            return int(value)
+        except (ValueError, TypeError):
+            return default
 
     async def on_plugin_init(self, event: Event) -> bool | None:
         self._config = event.data.get("task_config", {})
         self._port = self._config.get("serial_port", "/dev/ttyAMA0")
-        try:
-            self._addr = int(self._config.get("modbus_addr", 1))
-        except (ValueError, TypeError):
-            self._addr = 1
-        try:
-            self._baud = int(self._config.get("baudrate", 9600))
-        except (ValueError, TypeError):
-            self._baud = 9600
-        try:
-            self._de_pin = int(self._config.get("de_pin", -1))
-        except (ValueError, TypeError):
-            self._de_pin = -1
+        self._addr = self._safe_int(self._config.get("modbus_addr", 1), 1)
+        self._baud = self._safe_int(self._config.get("baudrate", 9600), 9600)
+        self._de_pin = self._safe_int(self._config.get("de_pin", -1), -1)
+        self._model = self._safe_int(self._config.get("model", P108_MODEL_ZN_FLOAT), P108_MODEL_ZN_FLOAT)
         for i in range(P108_NR_OUTPUT_VALUES):
-            try:
-                self._query_config[i] = int(self._config.get(f"query{i + 1}", [0, 1, 2, 5][i]))
-            except (ValueError, TypeError):
-                self._query_config[i] = [0, 1, 2, 5][i]
+            self._query_config[i] = self._safe_int(self._config.get(f"query{i + 1}"), [0, 1, 2, 5][i])
         return await self._setup_serial()
 
     async def on_plugin_exit(self, event: Event) -> bool | None:
@@ -109,12 +128,13 @@ class P108DDS238(PluginBase):
             return False
 
     async def _close_serial(self) -> None:
-        if self._serial:
-            try:
-                self._serial.close()
-            except Exception:
-                pass
-            self._serial = None
+        async with self._io_lock:
+            if self._serial:
+                try:
+                    self._serial.close()
+                except Exception:
+                    pass
+                self._serial = None
 
     async def _modbus_read(self, reg: int, count: int) -> list[int] | None:
         if not self._serial:
@@ -122,66 +142,95 @@ class P108DDS238(PluginBase):
         req = struct.pack(">BBHH", self._addr, 0x03, reg, count)
         crc = _modbus_crc(req)
         req += struct.pack("<H", crc)
-        try:
-            if self._de_pin >= 0 and self._hw:
-                self._hw.gpio.write(self._de_pin, 1)
-            await asyncio.to_thread(self._serial.write, req)
-            if self._de_pin >= 0 and self._hw:
-                await asyncio.sleep(0.001)
-                self._hw.gpio.write(self._de_pin, 0)
-            await asyncio.sleep(0.2)
-            resp = await asyncio.to_thread(self._serial.read, 256)
-            if len(resp) < 5:
+        async with self._io_lock:
+            port = self._serial
+            if port is None:
                 return None
-            data_len = resp[2]
-            if len(resp) < 3 + data_len + 2:
+            try:
+                if self._de_pin >= 0 and self._hw:
+                    self._hw.gpio.write(self._de_pin, 1)
+                await asyncio.to_thread(port.write, req)
+                if self._de_pin >= 0 and self._hw:
+                    await asyncio.sleep(0.001)
+                    self._hw.gpio.write(self._de_pin, 0)
+                resp = await asyncio.to_thread(port.read, 256)
+            except _SERIAL_ERRORS as e:
+                logger.warning("DDS238 serial error: %s", e)
                 return None
-            expected_crc = _modbus_crc(resp[:3 + data_len])
-            recv_crc = struct.unpack("<H", resp[3 + data_len:5 + data_len])[0]
-            if expected_crc != recv_crc:
-                logger.warning("DDS238 CRC mismatch")
+            except Exception as e:
+                logger.debug("DDS238 modbus error: %s", e)
                 return None
-            vals = []
-            for i in range(0, data_len, 2):
-                vals.append((resp[3 + i] << 8) | resp[4 + i])
-            return vals
-        except Exception as e:
-            logger.error("DDS238 modbus error: %s", e)
-        return None
+        if len(resp) < 5:
+            logger.debug("DDS238: short response (%d bytes)", len(resp))
+            return None
+        if resp[1] & 0x80:
+            logger.warning("DDS238: exception response, code %d", resp[2] if len(resp) > 2 else -1)
+            return None
+        data_len = resp[2]
+        if len(resp) < 3 + data_len + 2:
+            return None
+        expected_crc = _modbus_crc(resp[:3 + data_len])
+        recv_crc = struct.unpack("<H", resp[3 + data_len:5 + data_len])[0]
+        if expected_crc != recv_crc:
+            logger.warning("DDS238 CRC mismatch")
+            return None
+        vals = []
+        for i in range(0, data_len, 2):
+            vals.append((resp[3 + i] << 8) | resp[4 + i])
+        return vals
 
-    async def _read_float(self, hi_reg: int) -> float:
-        vals = await self._modbus_read(hi_reg, 2)
-        if vals and len(vals) >= 2:
-            raw = (vals[0] << 16) | vals[1]
-            import struct as st
-            return st.unpack(">f", st.pack(">I", raw))[0]
-        return 0.0
+    @staticmethod
+    def _words_to_float(words: list[int], reg: int) -> float:
+        raw = (words[reg] << 16) | words[reg + 1]
+        return struct.unpack(">f", struct.pack(">I", raw))[0]
 
-    async def _read_int32(self, reg: int) -> int:
-        vals = await self._modbus_read(reg, 2)
-        if vals and len(vals) >= 2:
-            return (vals[0] << 16) | vals[1]
-        return 0
+    @staticmethod
+    def _words_to_u32(words: list[int], reg: int) -> int:
+        return (words[reg] << 16) | words[reg + 1]
+
+    @staticmethod
+    def _to_i16(val: int) -> int:
+        return val - 0x10000 if val & 0x8000 else val
+
+    def _decode_zn_float(self, words: list[int]) -> list[float]:
+        # DDS238-x ZN: IEEE754 float32 values, 2 registers each
+        # 0x0000 V, 0x0002 A, 0x0004 W, 0x0006 Wh_imp, 0x0008 Wh_exp,
+        # 0x000A Wh_tot, 0x000C VA, 0x000E PF, 0x0010 F
+        return [self._words_to_float(words, r) for r in (0x00, 0x02, 0x04, 0x06, 0x08, 0x0A, 0x0C, 0x0E, 0x10)]
+
+    def _decode_zns_int(self, words: list[int]) -> list[float]:
+        # DDS238-2 ZN/S: integer registers
+        # 0x0000-0x0001 total energy (1/100 kWh), 0x0008-0x0009 export, 0x000A-0x000B import
+        # 0x000C voltage (1/10 V), 0x000D current (1/100 A), 0x000E active power (1 W, signed)
+        # 0x000F reactive power (1 VAr), 0x0010 power factor (1/1000), 0x0011 frequency (1/100 Hz)
+        wh = 1000.0 / 100.0  # 1/100 kWh -> Wh
+        return [
+            words[0x0C] / 10.0,                             # V
+            words[0x0D] / 100.0,                            # A
+            float(self._to_i16(words[0x0E])),               # W
+            self._words_to_u32(words, 0x0A) * wh,           # Wh import
+            self._words_to_u32(words, 0x08) * wh,           # Wh export
+            self._words_to_u32(words, 0x00) * wh,           # Wh total
+            float(words[0x0F]),                             # VA (reactive power)
+            words[0x10] / 1000.0,                           # PF
+            words[0x11] / 100.0,                            # F (Hz)
+        ]
 
     async def on_plugin_read(self, event: Event) -> bool | None:
         if not self._serial:
             return False
-        v = await self._read_float(0x00)
-        a = await self._read_float(0x02)
-        w = await self._read_float(0x04)
-        wh_imp = await self._read_float(0x06)
-        wh_exp = await self._read_float(0x08)
-        wh_tot = await self._read_float(0x0A)
-        va = await self._read_float(0x0C)
-        pf = await self._read_float(0x0E)
-        f_raw = await self._read_int32(0x10)
-        f = f_raw / 100.0 if f_raw else 0.0
-
-        all_vals = [v, a, w, wh_imp, wh_exp, wh_tot, va, pf, f]
+        words = await self._modbus_read(P108_FIRST_REG, P108_REG_COUNT)
+        if words is None or len(words) < P108_REG_COUNT:
+            logger.warning("DDS238: no valid response from device at address %d", self._addr)
+            return False
+        if self._model == P108_MODEL_ZNS_INT:
+            all_vals = self._decode_zns_int(words)
+        else:
+            all_vals = self._decode_zn_float(words)
         out = {}
         for i, q in enumerate(self._query_config):
-            if q < len(all_vals):
-                label = P108_QUERIES.get(q, f"Val{i}")
+            if 0 <= q < len(all_vals):
+                label = P108_QUERIES.get(q, f"Val{i + 1}")
                 out[label] = all_vals[q]
         event.data["values"] = out
         return True
@@ -190,7 +239,7 @@ class P108DDS238(PluginBase):
         self._config.setdefault("serial_port", "/dev/ttyAMA0")
         self._config.setdefault("modbus_addr", 1)
         self._config.setdefault("baudrate", 9600)
-        self._config.setdefault("model", 0)
+        self._config.setdefault("model", P108_MODEL_ZN_FLOAT)
         self._config.setdefault("de_pin", -1)
         self._config.setdefault("query1", 0)
         self._config.setdefault("query2", 1)
@@ -217,6 +266,9 @@ class P108DDS238(PluginBase):
                      "value": self._config.get("baudrate", 9600)})
         form.append({"name": "modbus_addr", "label": "Modbus Address", "type": "number",
                      "value": self._config.get("modbus_addr", 1), "min": 1, "max": 247})
+        form.append({"name": "model", "label": "Meter Model", "type": "select",
+                     "value": self._config.get("model", P108_MODEL_ZN_FLOAT),
+                     "options": [{"value": k, "label": v} for k, v in P108_MODELS.items()]})
         form.append({"name": "de_pin", "label": "DE Pin (RS485)", "type": "number",
                      "value": self._config.get("de_pin", -1)})
         event.data["form"] = form
@@ -240,8 +292,10 @@ class P108DDS238(PluginBase):
     async def on_plugin_webform_save(self, event: Event) -> bool | None:
         self._config.update(event.data.get("form_data", {}))
         for i in range(P108_NR_OUTPUT_VALUES):
-            self._query_config[i] = int(self._config.get(f"query{i + 1}", [0, 1, 2, 5][i]))
-        self._addr = int(self._config.get("modbus_addr", 1))
+            self._query_config[i] = self._safe_int(self._config.get(f"query{i + 1}"), [0, 1, 2, 5][i])
+        self._addr = self._safe_int(self._config.get("modbus_addr"), 1)
+        self._baud = self._safe_int(self._config.get("baudrate"), 9600)
+        self._model = self._safe_int(self._config.get("model"), P108_MODEL_ZN_FLOAT)
         return True
 
     async def on_plugin_get_devicegpionames(self, event: Event) -> bool | None:

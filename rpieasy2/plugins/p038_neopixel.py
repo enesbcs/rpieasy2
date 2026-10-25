@@ -203,6 +203,7 @@ class P038NeoPixel(PluginBase):
                 "type": "select",
                 "value": int(self._config.get("pin") or -1),
                 "options": pin_opts,
+                "gpio_pin": False,
             },
             {
                 "name": "led_count",

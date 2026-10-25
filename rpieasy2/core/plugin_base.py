@@ -18,6 +18,7 @@ class PluginBase:
         self._event_bus: EventBus = get_event_bus()
         self._hw: HWManager | None = None
         self._task_index: int = -1
+        self._subscriptions: list[tuple[str, Any]] = []
 
     def set_hw_manager(self, hw: HWManager) -> None:
         self._hw = hw
@@ -33,10 +34,11 @@ class PluginBase:
                    "PLUGIN_SET_DEFAULTS",
                    "PLUGIN_TASKTIMER_IN", "PLUGIN_CLOCK_IN",
                    "PLUGIN_GET_CONFIG_VALUE",
-                    "PLUGIN_WEBFORM_LOAD", "PLUGIN_WEBFORM_SAVE",
-                    "PLUGIN_WEBFORM_SHOW_CONFIG", "PLUGIN_WEBFORM_SHOW_VALUES",
-                    "PLUGIN_WEBFORM_LOAD_OUTPUT_SELECTOR"):
+                   "PLUGIN_WEBFORM_LOAD", "PLUGIN_WEBFORM_SAVE",
+                   "PLUGIN_WEBFORM_SHOW_CONFIG", "PLUGIN_WEBFORM_SHOW_VALUES",
+                   "PLUGIN_WEBFORM_LOAD_OUTPUT_SELECTOR"):
             self._event_bus.subscribe(et, self._dispatch)
+            self._subscriptions.append((et, self._dispatch))
 
     async def _dispatch(self, event: Event) -> bool | None:
         if event.task_index >= 0 and event.task_index != self._task_index:
@@ -178,4 +180,9 @@ class PluginBase:
         return {}
 
     def unsubscribe(self) -> None:
-        self._event_bus.clear()
+        for et, h in list(self._subscriptions):
+            try:
+                self._event_bus.unsubscribe(et, h)
+            except Exception:
+                pass
+        self._subscriptions.clear()

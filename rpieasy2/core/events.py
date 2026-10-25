@@ -75,18 +75,33 @@ AsyncEventHandler = Callable[["Event"], Awaitable[bool | None]]
 
 class EventBus:
     def __init__(self):
-        self._handlers: dict[str, list[AsyncEventHandler]] = defaultdict(list)
+        self._handlers: dict[str, list[tuple[int, int, AsyncEventHandler]]] = defaultdict(list)
+        self._seq = 0
 
-    def subscribe(self, event_type: str, handler: AsyncEventHandler) -> None:
-        self._handlers[event_type].append(handler)
+    def subscribe(self, event_type: str, handler: AsyncEventHandler, priority: int = 0) -> None:
+        # Handlers run in ascending priority order; equal priorities keep
+        # subscription order. Plugins/data producers use the default (0), while
+        # consumers that must observe the values produced during the event (e.g.
+        # the webserver, rules engine and controllers listening on PLUGIN_READ)
+        # subscribe with a higher priority so they always run last, even when a
+        # plugin instance is (re)created at runtime and subscribes afterwards.
+        self._seq += 1
+        self._handlers[event_type].append((priority, self._seq, handler))
+        self._handlers[event_type].sort(key=lambda item: (item[0], item[1]))
 
     def unsubscribe(self, event_type: str, handler: AsyncEventHandler) -> None:
-        if handler in self._handlers[event_type]:
-            self._handlers[event_type].remove(handler)
+        handlers = self._handlers.get(event_type)
+        if not handlers:
+            return
+        remaining = [item for item in handlers if item[2] != handler]
+        if remaining:
+            self._handlers[event_type] = remaining
+        else:
+            self._handlers.pop(event_type, None)
 
     async def publish(self, event: Event) -> list[bool | None]:
         results: list[bool | None] = []
-        for handler in self._handlers.get(event.type, []):
+        for _, _, handler in list(self._handlers.get(event.type, [])):
             try:
                 result = await handler(event)
                 results.append(result)
@@ -97,6 +112,7 @@ class EventBus:
 
     def clear(self) -> None:
         self._handlers.clear()
+        self._seq = 0
 
 
 _EVENT_BUS = EventBus()

@@ -374,6 +374,12 @@ class FtdiMultiGPIOManager(GPIOManager):
             offset += pw
         return result
 
+    def get_device_sources(self) -> list[dict[str, Any]]:
+        return [
+            {"url": getattr(dev, "_url", ""), "port_width": int(width)}
+            for dev, width in zip(self._devices, self._port_widths)
+        ]
+
     def close(self) -> None:
         for d in self._devices:
             d.close()
@@ -625,6 +631,11 @@ class FtdiGPIOManager(GPIOManager):
 
     def unwatch(self, pin: int) -> None:
         pass
+
+    def get_device_sources(self) -> list[dict[str, Any]]:
+        info = _device_info_cache.get(self._url, {})
+        width = int(info.get("port_width") or _port_width_from_url(self._url))
+        return [{"url": self._url, "port_width": width}]
 
     def close(self) -> None:
         if self._gpio is not None and self._owns_gpio:

@@ -45,11 +45,11 @@ function num_out_onchange(sel) {
         <TD>{{ field.label }}</TD>
         <TD>
             {% if field.type == 'number' %}
-            <input type='number' name='{{ field.name }}' value='{{ field.value }}' class='widenumber'>
+            <input type='number' name='{{ field.name }}' value='{{ field.value }}' class='widenumber'{% if field.gpio_pin %} data-gpio-pin='1' data-gpio-current='{{ field.value }}'{% endif %}>
             {% elif field.type == 'checkbox' %}
             <label class='container'><input type='checkbox' name='{{ field.name }}'{{ ' checked' if field.value else '' }}><span class='checkmark'></span></label>
             {% elif field.type == 'select' %}
-            <select name='{{ field.name }}' class='wide'>
+            <select name='{{ field.name }}' class='wide'{% if field.gpio_pin %} data-gpio-pin='1' data-gpio-current='{{ field.value }}'{% endif %}>
                 {% for opt in field.options %}
                 <option value='{{ opt.value }}'{{ ' selected' if (field.value|string) == (opt.value|string) else '' }}>{{ opt.label }}</option>
                 {% endfor %}
@@ -172,6 +172,7 @@ function num_out_onchange(sel) {
 </table>
 
 <BR>
+{% if show_controllers %}
 <table class='normal'>
     <TR><TH colspan='3'>Controller Assignment</TH></TR>
     {% for c in controller_list %}
@@ -182,6 +183,7 @@ function num_out_onchange(sel) {
     </TR>
     {% endfor %}
 </table>
+{% endif %}
 <BR>
 <table class='normal'>
     <TR>
@@ -204,22 +206,48 @@ function toasting() {
 }
 (function() {
     var gpioList = {{ gpio_list | tojson }};
-    document.querySelectorAll('input[name="pin"], input[name="button_pin"]').forEach(function(input) {
+    if (!gpioList || gpioList.length === 0) return;
+    var knownPins = {};
+    gpioList.forEach(function(gpio) { knownPins[String(gpio.pin)] = true; });
+    document.querySelectorAll('[data-gpio-pin="1"]').forEach(function(control) {
         var select = document.createElement('select');
-        select.name = input.name;
+        select.name = control.name;
         select.className = 'wide';
+        if (control.id) select.id = control.id;
+        var currentText = control.getAttribute('data-gpio-current');
+        if (currentText === null) currentText = control.value;
+        if (currentText === 'None') currentText = '';
+        var current = parseInt(currentText, 10);
+        var hasCurrent = !isNaN(current);
+        if (!hasCurrent || current < 0) {
+            var noneOpt = document.createElement('option');
+            noneOpt.value = currentText;
+            noneOpt.text = (currentText === '' || currentText === 'None') ? 'None' : 'None (' + currentText + ')';
+            noneOpt.selected = true;
+            select.appendChild(noneOpt);
+        }
         gpioList.forEach(function(gpio) {
             var opt = document.createElement('option');
             opt.value = gpio.pin;
             opt.text = gpio.label;
             if (gpio.special) opt.title = 'Special function: ' + gpio.special;
+            if (gpio.state && gpio.state.value !== undefined) {
+                opt.title = (opt.title ? opt.title + ' | ' : '') + 'Current value: ' + gpio.state.value;
+            }
             if (!gpio.available) { opt.disabled = true; opt.style.background = '#ff9999'; }
             if (gpio.in_use) opt.style.background = '#ffcccc';
-            var curVal = parseInt(input.value);
-            if (curVal === gpio.pin) opt.selected = true;
+            if (hasCurrent && current === gpio.pin) opt.selected = true;
             select.appendChild(opt);
         });
-        input.parentNode.replaceChild(select, input);
+        if (hasCurrent && current >= 0 && !knownPins[String(current)]) {
+            var missingOpt = document.createElement('option');
+            missingOpt.value = current;
+            missingOpt.text = 'Pin ' + current + ' (not available)';
+            missingOpt.selected = true;
+            missingOpt.style.background = '#ff9999';
+            select.appendChild(missingOpt);
+        }
+        control.parentNode.replaceChild(select, control);
     });
 })();
 </script>

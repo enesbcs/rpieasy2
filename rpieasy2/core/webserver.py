@@ -716,6 +716,19 @@ def _ctx(page_title: str, active_page: str, **kw) -> dict:
             "sysinfo": _get_sysinfo(), "ctrl_runtime": _controller_runtime_states, **kw}
 
 
+def _render_page(request: web.Request, template_name: str,
+                 page_title: str, active_page: str, **kw) -> web.Response:
+    """Segédfüggvény az oldalak egységes rendereléséhez.
+
+    Ötvözi a _ctx() kontextusépítést és a aiohttp_jinja2.render_template() hívást,
+    így az útvonalakban nem kell mindenhol ugyanazon a kettő ismétlődni.
+    Az ESPEasy WebServer sendHeadandTail_stdtemplate() / sendTail_stdtemplate()
+    logikájának Python/aiohttp másolata.
+    """
+    return aiohttp_jinja2.render_template(
+        template_name, request, _ctx(page_title, active_page, **kw))
+
+
 async def _get_plugin_form_fields(plugin_id: int, task_config: dict) -> list[dict]:
     if not _lazy_load_plugin(plugin_id):
         return []
@@ -768,12 +781,12 @@ async def index(request: web.Request) -> web.Response:
             "load": f"{nd.get('load', 0.0):.2f}" if isinstance(nd.get("load"), (int, float)) else nd.get("load", ""),
             "age": str(int(time.time() - last_seen)),
         })
-    return aiohttp_jinja2.render_template("index.html", request, _ctx("Main", "main", nodes=nodes))
+    return _render_page(request, "index.html", "Main", "main", nodes=nodes)
 
 
 @_routes.get("/config")
 async def config_page(request: web.Request) -> web.Response:
-    return aiohttp_jinja2.render_template("config.html", request, _ctx("Config", "config"))
+    return _render_page(request, "config.html", "Config", "config")
 
 
 @_routes.get("/controllers")
@@ -798,7 +811,7 @@ async def controllers_page(request: web.Request) -> web.Response:
                  ctrl_defaults=ctrl_defaults, ctrl_flags=ctrl_flags,
                  client_id_resolved=client_id_resolved,
                  ctrl_runtime=runtime_state))
-    return aiohttp_jinja2.render_template("controllers.html", request, _ctx("Controllers", "controllers"))
+    return _render_page(request, "controllers.html", "Controllers", "controllers")
 
 
 @_routes.post("/controllers")
@@ -1586,6 +1599,7 @@ async def devices_page(request: web.Request) -> web.Response:
     if index is not None:
         idx = _safe_int(index)
         cfg = get_config()
+        hw = request.app.get("hw_manager")
         task_data = cfg.get_task(idx) or {}
         if task_data.get("name") and "TDN" not in task_data:
             task_data["TDN"] = task_data.pop("name")
@@ -1596,6 +1610,7 @@ async def devices_page(request: web.Request) -> web.Response:
         plugin_id = _safe_int(task_data.get("plugin_id") or task_data.get("plugin", 0))
         plugin_name = _plugin_info.get(plugin_id, {}).get("name", "Unknown")
         form_fields = await _get_plugin_form_fields(plugin_id, task_data)
+        _mark_gpio_pin_fields(form_fields)
         _lazy_load_plugin(plugin_id)
         entry = _plugin_info.get(plugin_id)
         default_num = entry["class"].PLUGIN_VALUES if entry and entry["class"] else NUM_TASK_VALUES
@@ -1605,6 +1620,12 @@ async def devices_page(request: web.Request) -> web.Response:
         else:
             num_out = SENSOR_TYPE_TO_VALUE_COUNT.get(_safe_int(tdnum_out_raw), default_num)
         device_props = entry["class"].DEVICE_PROPERTIES if entry and entry["class"] else DeviceProperties()
+
+        # Controllers csak akkor relevansak, ha a pluginnak van kiküldendő értéke
+        # (output_data_type != 0 vagy value_count > 0).
+        show_controllers = (
+            device_props.output_data_type != 0 or default_num > 0
+        )
 
         show_config_html = ""
         show_values_html = ""
@@ -1656,7 +1677,7 @@ async def devices_page(request: web.Request) -> web.Response:
                     "name": _controller_info.get(cid, {}).get("name", f"Controller {i+1}"),
                 })
         page = request.query.get("page", "1")
-        gpio_list = _build_gpio_list(cfg)
+        gpio_list = _build_gpio_list(cfg, hw)
         return aiohttp_jinja2.render_template("device_edit.html", request,
             _ctx("Device Edit", "devices", index=idx, plugin_id=plugin_id,
                  plugin_name=plugin_name, task_config=task_data,
@@ -1669,7 +1690,7 @@ async def devices_page(request: web.Request) -> web.Response:
                  tuom_options=_TUOM_OPTIONS, tdtv_options=_TDTV_OPTIONS,
                  tdsc_options=_TDSC_OPTIONS,
                  controller_list=controller_list, page=page,
-                 gpio_list=gpio_list))
+                 gpio_list=gpio_list, show_controllers=show_controllers))
     page = _safe_int(request.query.get("page", 1), 1)
     total_pages = max(1, (TOTAL_TASK_SLOTS + TASKS_PER_PAGE - 1) // TASKS_PER_PAGE)
     page = max(1, min(page, total_pages))
@@ -1702,11 +1723,15 @@ async def devices_post(request: web.Request) -> web.Response:
     _lazy_load_plugin(plugin_id)
     entry = _plugin_info.get(plugin_id)
     _default_vtype = entry["class"].DEVICE_PROPERTIES.vtype if entry and entry["class"] else 1
+    _device_props_post = entry["class"].DEVICE_PROPERTIES if entry and entry["class"] else DeviceProperties()
+    # Ha a plugin timer_optional, akkor az alapértelmezett időzítő 0 (nincs időzítés),
+    # különben DEFAULT_TASK_INTERVAL.
+    _default_tdt = 0 if _device_props_post.timer_optional else DEFAULT_TASK_INTERVAL
     task_data = {
         "plugin_id": plugin_id,
         "TDN": data.get("TDN", ""),
         "TDE": "TDE" in data,
-        "TDT": _safe_int(data.get("TDT", DEFAULT_TASK_INTERVAL), DEFAULT_TASK_INTERVAL),
+        "TDT": _safe_int(data.get("TDT", _default_tdt), _default_tdt),
         "TDNUM_out": _safe_int(data.get("TDNUM_out", _default_vtype), _default_vtype),
         "TVSE": "TVSE" in data,
         "TSDV": "TSDV" in data,
@@ -1886,9 +1911,16 @@ async def pinstates_page(request: web.Request) -> web.Response:
         hw = request.app.get("hw_manager")
         used_pins: dict[int, list[dict]] = {}
         for ti, task in enumerate(cfg.data.get("tasks", [])):
-            pin = task.get("pin", 0)
-            if pin:
-                p = int(pin)
+            if not isinstance(task, dict):
+                continue
+            task_pins: set[int] = set()
+            for key, value in task.items():
+                if not _is_gpio_pin_field(key):
+                    continue
+                p = _coerce_pin(value)
+                if p is None or p < 0 or p in task_pins:
+                    continue
+                task_pins.add(p)
                 pid = task.get("plugin_id") or task.get("plugin", 0)
                 entry = _plugin_info.get(int(pid)) if pid else None
                 tname = task.get("TDN", task.get("name", f"Task {ti + 1}"))
@@ -1902,18 +1934,10 @@ async def pinstates_page(request: web.Request) -> web.Response:
             raw = hw.gpio.get_pin_states()
             if raw:
                 pin_values = {p: s.get("value", "?") for p, s in raw.items()}
-        from rpieasy2.core.hw import has_native_hw
-        if has_native_hw():
-            boot = _read_boot_config()
-            special_gpio: dict[int, str] = {0: "I2C0 SDA", 1: "I2C0 SCL"}
-            if boot.get("i2c_arm"):
-                special_gpio.update({2: "I2C1 SDA (HAT ID)", 3: "I2C1 SCL (HAT ID)"})
-            if boot.get("spi"):
-                special_gpio.update({8: "SPI0 CE0", 9: "SPI0 MISO", 10: "SPI0 MOSI", 11: "SPI0 SCLK"})
-            if boot.get("spi1"):
-                special_gpio.update({16: "SPI1 CE0", 17: "SPI1 MISO", 18: "SPI1 MOSI", 19: "SPI1 SCLK"})
-            if boot.get("uart"):
-                special_gpio.update({14: "UART TX", 15: "UART RX"})
+        from rpieasy2.core.hw import get_gpio_backend
+        backend = get_gpio_backend(getattr(hw, "gpio", None))
+        if backend == "rpi":
+            special_gpio = _rpi_special_gpio()
             gpio_states = []
             for pin in range(RPI_GPIO_COUNT):
                 available = pin in RPI_USABLE_GPIO
@@ -1927,8 +1951,8 @@ async def pinstates_page(request: web.Request) -> web.Response:
                 })
             usable_count = len(RPI_USABLE_GPIO)
             total_count = RPI_GPIO_COUNT
-        else:
-            ftdi_devices = cfg.data.get("system", {}).get("ftdi_devices", [])
+        elif backend == "ftdi":
+            ftdi_devices = _ftdi_sources(cfg, hw)
             from rpieasy2.core.hw.ftdi import all_reserved_pins, url_identifier
             gpio_states = []
             if ftdi_devices:
@@ -1974,8 +1998,11 @@ async def pinstates_page(request: web.Request) -> web.Response:
                     })
             usable_count = len([s for s in gpio_states if s["available"]])
             total_count = len(gpio_states)
-        from rpieasy2.core.rpiconst import is_alternative_board
-        if is_alternative_board() and has_native_hw():
+        else:
+            gpio_states = []
+            usable_count = 0
+            total_count = 0
+        if backend == "gpiod":
             enriched = _enrich_gpio_names()
             alt_gpio_states = []
             for g in enriched:
@@ -2027,7 +2054,7 @@ async def control_cmd(request: web.Request) -> web.Response:
 
 @_routes.get("/sysinfo")
 async def sysinfo_page(request: web.Request) -> web.Response:
-    return aiohttp_jinja2.render_template("sysinfo.html", request, _ctx("Sysinfo", "sysinfo"))
+    return _render_page(request, "sysinfo.html", "Sysinfo", "sysinfo")
 
 
 @_routes.get("/advanced")
@@ -2156,7 +2183,7 @@ async def notifications_page(request: web.Request) -> web.Response:
         return aiohttp_jinja2.render_template("notification_edit.html", request,
             _ctx("Notification Edit", "notifications", index=idx, notif_id=notif_id,
                  notifier_name=notif_name, notif_config=notif_data))
-    return aiohttp_jinja2.render_template("notifications.html", request, _ctx("Notifications", "notifications"))
+    return _render_page(request, "notifications.html", "Notifications", "notifications")
 
 
 @_routes.post("/notifications")
@@ -2209,7 +2236,7 @@ async def api_notification_test(request: web.Request) -> web.Response:
 
 @_routes.get("/i2cscanner")
 async def i2cscanner_page(request: web.Request) -> web.Response:
-    return aiohttp_jinja2.render_template("i2cscanner.html", request, _ctx("I2C Scanner", "tools"))
+    return _render_page(request, "i2cscanner.html", "I2C Scanner", "tools")
 
 
 @_routes.get("/api/i2cscan/stream")
@@ -2315,7 +2342,7 @@ async def api_i2cscan_stream(request: web.Request) -> web.StreamResponse:
 
 @_routes.get("/about")
 async def about_page(request: web.Request) -> web.Response:
-    return aiohttp_jinja2.render_template("about.html", request, _ctx("About", "about"))
+    return _render_page(request, "about.html", "About", "about")
 
 
 @_routes.get("/api/config")
@@ -2629,7 +2656,7 @@ async def api_notification_delete(request: web.Request) -> web.Response:
 
 @_routes.get("/log")
 async def log_page(request: web.Request) -> web.Response:
-    return aiohttp_jinja2.render_template("log.html", request, _ctx("Log", "tools"))
+    return _render_page(request, "log.html", "Log", "tools")
 
 
 @_routes.get("/logjson")
@@ -3185,16 +3212,149 @@ def _check_deps(deps: list[str]) -> tuple[list[str], list[str], list[str]]:
     return missing, warnings, ok
 
 
-def _build_gpio_list(cfg) -> list[dict]:
-    from rpieasy2.core.hw import has_native_hw
-    from rpieasy2.core.rpiconst import is_alternative_board
+def _is_gpio_pin_field(name: str) -> bool:
+    """Return True for plugin form/task fields that hold a GPIO pin number."""
+    name = (name or "").lower()
+    if name in ("pin", "pin_scl", "pin_sdo"):
+        return True
+    if name.startswith("pin") and name[3:].isdigit():
+        return True
+    return name.endswith("_pin")
+
+
+def _mark_gpio_pin_fields(form_fields: list[dict]) -> None:
+    """Mark form fields that should use the active GPIO pin list in the UI.
+
+    Plugins may explicitly set ``gpio_pin`` to False when their pin field has
+    hardware-specific restrictions (for example PWM-only pins).
+    """
+    for field in form_fields:
+        if "gpio_pin" in field:
+            continue
+        if field.get("type") in ("number", "select") and _is_gpio_pin_field(field.get("name", "")):
+            field["gpio_pin"] = True
+
+
+def _coerce_pin(value: Any) -> int | None:
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _collect_used_pins(tasks: list[dict]) -> set[int]:
+    used: set[int] = set()
+    for task in tasks:
+        if not isinstance(task, dict):
+            continue
+        for key, value in task.items():
+            if not _is_gpio_pin_field(key):
+                continue
+            pin = _coerce_pin(value)
+            if pin is not None and pin >= 0:
+                used.add(pin)
+    return used
+
+
+def _rpi_special_gpio() -> dict[int, str]:
+    boot = _read_boot_config()
+    special: dict[int, str] = {0: "I2C0 SDA", 1: "I2C0 SCL"}
+    if boot.get("i2c_arm"):
+        special.update({2: "I2C1 SDA (HAT ID)", 3: "I2C1 SCL (HAT ID)"})
+    if boot.get("spi"):
+        special.update({8: "SPI0 CE0", 9: "SPI0 MISO", 10: "SPI0 MOSI", 11: "SPI0 SCLK"})
+    if boot.get("spi1"):
+        special.update({16: "SPI1 CE0", 17: "SPI1 MISO", 18: "SPI1 MOSI", 19: "SPI1 SCLK"})
+    if boot.get("uart"):
+        special.update({14: "UART TX", 15: "UART RX"})
+    return special
+
+
+def _live_pin_states(hw: Any) -> dict[int, dict[str, Any]]:
+    try:
+        gpio = getattr(hw, "gpio", None)
+        if gpio is not None and hasattr(gpio, "get_pin_states"):
+            return gpio.get_pin_states() or {}
+    except Exception:
+        pass
+    return {}
+
+
+def _ftdi_sources(cfg: Any, hw: Any) -> list[dict]:
+    devices = cfg.data.get("system", {}).get("ftdi_devices", []) or []
+    if devices:
+        return sorted(devices, key=lambda d: (d.get("device_id") or d.get("url", "") or ""))
+    gpio = getattr(hw, "gpio", None)
+    getter = getattr(gpio, "get_device_sources", None)
+    if callable(getter):
+        try:
+            return getter()
+        except Exception:
+            pass
+    return []
+
+
+def _build_gpio_list(cfg, hw: Any = None) -> list[dict]:
+    """Build the GPIO pin list from the GPIO backend that is actually active."""
+    from rpieasy2.core.hw import get_gpio_backend
+
+    backend = get_gpio_backend(getattr(hw, "gpio", None))
+    used_pins = _collect_used_pins(cfg.data.get("tasks", []))
+    live_states = _live_pin_states(hw)
     gpio_list: list[dict] = []
-    used_pins: set[int] = set()
-    for task in cfg.data.get("tasks", []):
-        pin = task.get("pin", 0)
-        if pin:
-            used_pins.add(int(pin))
-    if is_alternative_board() and has_native_hw() and GPIO_NAMES:
+
+    if backend == "ftdi":
+        from rpieasy2.core.hw.ftdi import all_reserved_pins, url_identifier
+        global_pin = 0
+        for di, dev in enumerate(_ftdi_sources(cfg, hw)):
+            port_width = int(dev.get("port_width", 16) or 16)
+            mpsse = dev.get("mpsse_channels", []) or []
+            reserved = all_reserved_pins(mpsse, port_width)
+            identifier = dev.get("device_id") or (
+                url_identifier(dev.get("url", "")) if dev.get("url") else f"FTDI #{di}"
+            )
+            for local_pin in range(port_width):
+                in_use = global_pin in used_pins
+                special = "reserved by MPSSE" if local_pin in reserved else ""
+                label = f"GPIO {global_pin} ({identifier})"
+                if in_use:
+                    label += " [IN USE]"
+                if special:
+                    label += f" ({special})"
+                gpio_list.append({
+                    "pin": global_pin,
+                    "label": label,
+                    "available": local_pin not in reserved,
+                    "in_use": in_use,
+                    "special": special,
+                    "state": live_states.get(global_pin),
+                    "ftdi_device": di,
+                    "ftdi_pin": local_pin,
+                })
+                global_pin += 1
+
+    elif backend == "rpi":
+        special_gpio = _rpi_special_gpio()
+        for pin in sorted(RPI_USABLE_GPIO):
+            in_use = pin in used_pins
+            special = special_gpio.get(pin, "")
+            label = f"GPIO {pin}"
+            if in_use:
+                label += " [IN USE]"
+            if special:
+                label += f" ({special})"
+            gpio_list.append({
+                "pin": pin,
+                "label": label,
+                "available": True,
+                "in_use": in_use,
+                "special": special,
+                "state": live_states.get(pin),
+            })
+
+    elif backend == "gpiod":
         for g in GPIO_NAMES:
             gp = g["global_pin"]
             in_use = gp in used_pins
@@ -3207,51 +3367,9 @@ def _build_gpio_list(cfg) -> list[dict]:
                 "available": True,
                 "in_use": in_use,
                 "special": "",
+                "state": live_states.get(gp),
             })
-    elif has_native_hw():
-        ftdi_devices = cfg.data.get("system", {}).get("ftdi_devices", [])
-        from rpieasy2.core.hw.ftdi import all_reserved_pins, url_identifier
-        if ftdi_devices:
-            sorted_devices = sorted(ftdi_devices, key=lambda d: (d.get("device_id") or d.get("url", "") or ""))
-            global_pin = 0
-            for di, dev in enumerate(sorted_devices):
-                port_width = dev.get("port_width", 16)
-                mpsse = dev.get("mpsse_channels", [])
-                reserved = all_reserved_pins(mpsse, port_width)
-                identifier = dev.get("device_id") or (url_identifier(dev.get("url", "")) if dev.get("url") else f"FTDI #{di}")
-                for local_pin in range(port_width):
-                    in_use = global_pin in used_pins
-                    special = ""
-                    if local_pin in reserved:
-                        special = "reserved by MPSSE"
-                    label = f"GPIO {global_pin} ({identifier})"
-                    if in_use:
-                        label += " [IN USE]"
-                    if special:
-                        label += f" ({special})"
-                    gpio_list.append({
-                        "pin": global_pin,
-                        "label": label,
-                        "available": local_pin not in reserved,
-                        "in_use": in_use,
-                        "special": special,
-                        "ftdi_device": di,
-                        "ftdi_pin": local_pin,
-                    })
-                    global_pin += 1
-        else:
-            for pin in range(16):
-                in_use = pin in used_pins
-                label = f"GPIO {pin} (FTDI)"
-                if in_use:
-                    label += " [IN USE]"
-                gpio_list.append({
-                    "pin": pin,
-                    "label": label,
-                    "available": True,
-                    "in_use": in_use,
-                    "special": "",
-                })
+
     return gpio_list
 
 
@@ -3287,21 +3405,26 @@ _KNOWN_DEPS: dict[str, list[str]] = {
     "p038": ["rpi_ws281x"],
     "p045": ["smbus2"],
     "p047": ["smbus2"],
-    "p049": [],
+    "p040": ["serial"],
+    "p049": ["serial"],
     "p050": ["smbus2"],
     "p051": ["smbus2"],
-    "p053": [],
+    "p053": ["serial"],
+    "p056": ["serial"],
     "p059": ["lgpio"],
     "p067": ["lgpio"],
     "p068": ["smbus2"],
-    "p074": ["smbus2"],
+    "p075": ["serial"],
+    "p077": ["serial"],
+    "p082": ["serial"],
     "p083": ["smbus2"],
     "p087": [],
     "p089": [],
     "p101": [],
-    "p102": [],
+    "p102": ["serial"],
     "p105": ["smbus2"],
     "p106": ["smbus2"],
+    "p108": ["serial"],
     "p110": ["smbus2"],
     "p111": ["spidev"],
     "p113": ["smbus2"],
@@ -3312,14 +3435,16 @@ _KNOWN_DEPS: dict[str, list[str]] = {
     "p135": ["smbus2"],
     "p147": ["smbus2"],
     "p153": ["smbus2"],
-    "p159": [],
+    "p159": ["serial"],
     "p512": [],
     "p513": ["lgpio"],
-    "p514": [],
+    "p514": ["serial"],
     "p515": ["smbus2"],
     "p516": ["smbus2"],
     "p517": ["hidapi", "usbrelay_udev"],
-    "p518": ["temper_udev"],
+    "p518": ["serial", "temper_udev"],
+    "p524": ["serial"],
+    "p525": ["serial"],
     "c002": ["aiomqtt"],
     "c005": ["aiomqtt"],
     "c006": ["aiomqtt"],
@@ -3409,9 +3534,9 @@ async def api_plugins_install(request: web.Request) -> web.Response:
             if proc.returncode == 0:
                 pip_pkg = "Pillow" if pkg == "pillow_extra_deps" else "hidapi"
                 import sys as _sys
-                pip_path = _sys.executable.replace("python", "pip")
+                pip_cmd = [_sys.executable, "-m", "pip", "install", "--force-reinstall", pip_pkg]
                 pip_proc = await asyncio.create_subprocess_exec(
-                    pip_path, "install", "--force-reinstall", pip_pkg,
+                    *pip_cmd,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
                 )
@@ -3491,10 +3616,10 @@ async def api_plugins_install(request: web.Request) -> web.Response:
         return web.json_response({"status": "ok", "message": "udev rule installed, reloaded. Re-plug the USB relay or restart."})
 
     import sys as _sys
-    pip_path = _sys.executable.replace("python", "pip")
+    pip_cmd = [_sys.executable, "-m", "pip", "install", pkg]
     try:
         proc = await asyncio.create_subprocess_exec(
-            pip_path, "install", pkg,
+            *pip_cmd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
@@ -3526,7 +3651,9 @@ async def _on_plugin_read(event: Event) -> bool | None:
 
 
 def subscribe_plugin_read() -> None:
-    get_event_bus().subscribe("PLUGIN_READ", _on_plugin_read)
+    bus = get_event_bus()
+    bus.unsubscribe("PLUGIN_READ", _on_plugin_read)
+    bus.subscribe("PLUGIN_READ", _on_plugin_read, priority=10)
 
 
 def create_app(plugins_dir: str | None = None, controllers_dir: str | None = None, notifiers_dir: str | None = None) -> web.Application:

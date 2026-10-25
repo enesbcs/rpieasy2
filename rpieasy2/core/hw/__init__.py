@@ -169,6 +169,36 @@ def has_native_hw() -> bool:
     return _HAS_NATIVE
 
 
+def get_gpio_backend(gpio: GPIOManager | None = None) -> str:
+    """Return the name of the currently active GPIO backend.
+
+    The result is based on the actual GPIO manager instance, not on module
+    availability or on config entries. This keeps the web UI in sync with the
+    backend that is really handling pin operations.
+    """
+    if gpio is None:
+        return "none"
+    try:
+        from rpieasy2.core.hw.ftdi import FtdiGPIOManager, FtdiMultiGPIOManager
+        if isinstance(gpio, (FtdiGPIOManager, FtdiMultiGPIOManager)):
+            return "ftdi"
+    except Exception:
+        pass
+    try:
+        from rpieasy2.core.hw.lgpio_gpio import LgpioGPIOManager
+        if isinstance(gpio, LgpioGPIOManager):
+            return "rpi"
+    except Exception:
+        pass
+    try:
+        from rpieasy2.core.hw.gpiod_gpio import GpiodGPIOManager
+        if isinstance(gpio, GpiodGPIOManager):
+            return "gpiod"
+    except Exception:
+        pass
+    return "none"
+
+
 def _native_gpio() -> GPIOManager:
     global _HAS_NATIVE
     try:

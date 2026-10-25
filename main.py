@@ -150,6 +150,10 @@ async def _handle_task_config_changed(event: Event) -> bool | None:
             await old_inst.on_plugin_exit(Event(type="PLUGIN_EXIT", task_index=ti, data={}))
         except Exception:
             pass
+        try:
+            old_inst.unsubscribe()
+        except Exception:
+            pass
         logger.debug(f"Unloaded plugin for task {ti}")
     pid = task_config.get("plugin_id")
     if pid is None:
@@ -395,7 +399,7 @@ async def main():
                         await _rules_engine.fire_event(f"{tname}#{vname}")
         return None
 
-    bus.subscribe("PLUGIN_READ", _rules_plugin_read_listener)
+    bus.subscribe("PLUGIN_READ", _rules_plugin_read_listener, priority=10)
 
     async def _controller_send_listener(event: Event) -> bool | None:
         if event.task_index < 0:
@@ -432,7 +436,7 @@ async def main():
             await bus2.publish(send_ev)
         return None
 
-    bus.subscribe("PLUGIN_READ", _controller_send_listener)
+    bus.subscribe("PLUGIN_READ", _controller_send_listener, priority=10)
 
     async def _rules_gpio_change_listener(event: Event) -> bool | None:
         global _rules_engine
