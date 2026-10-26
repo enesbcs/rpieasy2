@@ -240,7 +240,10 @@ class C005HomeAssistantMQTT(ControllerBase):
                 await asyncio.sleep(5)
                 continue
             try:
-                host = config.get("controllerip", config.get("host", "127.0.0.1"))
+                host = config.get("controllerip", config.get("host", "127.0.0.1")) or "127.0.0.1"
+                host = host.strip()
+                if not host:
+                    host = "127.0.0.1"
                 port = int(config.get("controllerport", config.get("port", DEFAULT_MQTT_PORT)))
                 user = config.get("controlleruser", config.get("username", "")) or None
                 password = config.get("controllerpassword", config.get("password", "")) or None
@@ -307,7 +310,7 @@ class C005HomeAssistantMQTT(ControllerBase):
                     self._client = None
             except Exception as e:
                 # Log MqttError without full traceback if it's a common connection issue
-                if isinstance(e, aiomqtt.MqttError):
+                if isinstance(e, (aiomqtt.MqttError, ValueError)):
                     logger.error("MQTT connection error: %s", e)
                 else:
                     logger.exception("MQTT client loop encountered an error, will retry")

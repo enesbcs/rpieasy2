@@ -1,6 +1,11 @@
 {% extends "base.html" %}
 {% block content %}
 <form name='frmselect' method='post'>
+{% if save_error %}
+<div style='background:#f8d7da;border:1px solid #dc3545;padding:8px;border-radius:4px;color:#721c24;margin-bottom:10px;'>
+    <strong>Error:</strong> Saving settings failed – the configuration file is not writable (permission error).
+</div>
+{% endif %}
 <script>
 function dept_onchange(form) { form.submit(); }
 function task_select_onchange(form) {
@@ -248,6 +253,16 @@ function toasting() {
             select.appendChild(missingOpt);
         }
         control.parentNode.replaceChild(select, control);
+    });
+
+    // Form submit handler: normalize GPIO pin fields (None / -1 → empty string)
+    document.querySelector('form[name="frmselect"]').addEventListener('submit', function() {
+        document.querySelectorAll('[data-gpio-pin="1"]').forEach(function(control) {
+            var val = control.value;
+            if (val === '' || val === 'None' || val === '-1' || parseInt(val, 10) < 0) {
+                control.value = '';
+            }
+        });
     });
 })();
 </script>

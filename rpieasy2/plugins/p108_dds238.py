@@ -41,7 +41,8 @@ P108_QUERY_LIST = list(P108_QUERIES)
 
 try:
     import serial as _pyserial
-    _SERIAL_ERRORS: tuple = (_pyserial.SerialException, OSError)
+    _serial_exc = getattr(_pyserial, "SerialException", OSError)
+    _SERIAL_ERRORS: tuple = (_serial_exc, OSError)
 except ImportError:  # pragma: no cover - pyserial is a hard requirement for this plugin
     _SERIAL_ERRORS = (OSError,)
 

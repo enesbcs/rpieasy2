@@ -38,7 +38,8 @@ P525_CHANNEL_NONE = -1
 
 try:
     import serial as _pyserial
-    _SERIAL_ERRORS: tuple = (_pyserial.SerialException, OSError)
+    _serial_exc = getattr(_pyserial, "SerialException", OSError)
+    _SERIAL_ERRORS: tuple = (_serial_exc, OSError)
 except ImportError:  # pragma: no cover - pyserial is a hard requirement for this plugin
     _SERIAL_ERRORS = (OSError,)
 

@@ -73,7 +73,8 @@ class RpEasyConfig:
                 self.path = p
                 logger.debug("Config saved to %s", p)
                 return
-            except (OSError, PermissionError):
+            except (OSError, PermissionError) as e:
+                logger.warning("Config save failed to %s: %s", p, e)
                 continue
         raise PermissionError("Cannot save config to any location, tried: script dir, ~/rpieasy2/")
 

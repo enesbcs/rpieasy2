@@ -1677,6 +1677,7 @@ async def devices_page(request: web.Request) -> web.Response:
                     "name": _controller_info.get(cid, {}).get("name", f"Controller {i+1}"),
                 })
         page = request.query.get("page", "1")
+        save_error = request.query.get("save_error") == "1"
         gpio_list = _build_gpio_list(cfg, hw)
         return aiohttp_jinja2.render_template("device_edit.html", request,
             _ctx("Device Edit", "devices", index=idx, plugin_id=plugin_id,
@@ -1690,16 +1691,19 @@ async def devices_page(request: web.Request) -> web.Response:
                  tuom_options=_TUOM_OPTIONS, tdtv_options=_TDTV_OPTIONS,
                  tdsc_options=_TDSC_OPTIONS,
                  controller_list=controller_list, page=page,
-                 gpio_list=gpio_list, show_controllers=show_controllers))
+                 gpio_list=gpio_list, show_controllers=show_controllers,
+                 save_error=save_error))
     page = _safe_int(request.query.get("page", 1), 1)
     total_pages = max(1, (TOTAL_TASK_SLOTS + TASKS_PER_PAGE - 1) // TASKS_PER_PAGE)
     page = max(1, min(page, total_pages))
     start_slot = (page - 1) * TASKS_PER_PAGE
     end_slot = min(start_slot + TASKS_PER_PAGE, TOTAL_TASK_SLOTS)
     page_slots = range(start_slot, end_slot)
+    save_error = request.query.get("save_error") == "1"
     return aiohttp_jinja2.render_template("devices.html", request,
         _ctx("Devices", "devices", page=page, total_pages=total_pages,
-             page_slots=page_slots, value_count_map=SENSOR_TYPE_TO_VALUE_COUNT))
+             page_slots=page_slots, value_count_map=SENSOR_TYPE_TO_VALUE_COUNT,
+             save_error=save_error))
 
 
 @_routes.post("/devices")
@@ -1824,7 +1828,14 @@ async def devices_post(request: web.Request) -> web.Response:
             except Exception as e:
                 logger.warning(f"PLUGIN_READ after save failed: {e}")
     cfg.set_task(idx, task_data)
-    cfg.save()
+    try:
+        cfg.save()
+    except PermissionError as e:
+        logger.error("Config save failed: %s", e)
+        page = data.get("page", "1")
+        if idx >= 0:
+            return web.HTTPFound(f"/devices?index={idx}&page={page}&save_error=1")
+        return web.HTTPFound(f"/devices?page={page}&save_error=1")
     bus = get_event_bus()
     await bus.publish(Event(type="TASK_CONFIG_CHANGED", task_index=idx, data={"task_config": task_data}))
     page = data.get("page", "1")
@@ -2895,6 +2906,9 @@ async def update_post(request: web.Request) -> web.Response:
     try:
         pkg_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         base_dir = os.path.dirname(pkg_dir)
+        if not os.access(base_dir, os.W_OK):
+            logger.error("Update directory not writable: %s", base_dir)
+            return web.HTTPFound(f"/update?error=directory_not_writable")
         with zipfile.ZipFile(zip_path, "r") as zf:
             for info in zf.infolist():
                 if info.is_dir():

@@ -1,5 +1,10 @@
 {% extends "base.html" %}
 {% block content %}
+{% if save_error %}
+<div style='background:#f8d7da;border:1px solid #dc3545;padding:8px;border-radius:4px;color:#721c24;margin-bottom:10px;'>
+    <strong>Error:</strong> Saving settings failed – the configuration file is not writable (permission error).
+</div>
+{% endif %}
 <script defer>
 function elId(e){return document.getElementById(e)}
 var _ttl = 1000;

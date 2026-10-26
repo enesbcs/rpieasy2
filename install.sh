@@ -215,6 +215,12 @@ esac
 RUNEOF
 chmod +x "${DEST}/run.sh"
 
+echo "==> Checking config/ writability..."
+if [ ! -w "${DEST}/config" ]; then
+    echo "  config/ is not writable by $(whoami), fixing permissions..."
+    chmod -R a+rw "${DEST}/config" 2>/dev/null || sudo chmod -R a+rw "${DEST}/config"
+fi
+
 echo "==> Done!"
 echo "    Service: ${SERVICE_NAME} (started and enabled)"
 echo "    Manage with: ${DEST}/run.sh [start|stop|status|log]"
