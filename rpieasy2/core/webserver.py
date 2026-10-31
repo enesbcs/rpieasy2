@@ -805,13 +805,16 @@ async def controllers_page(request: web.Request) -> web.Response:
         client_id_resolved = resolve_controller_template(client_id_raw)
         # include runtime connection state for UI (do not persist)
         runtime_state = get_controller_runtime_state(idx)
+        save_error = request.query.get("save_error") == "1"
         return aiohttp_jinja2.render_template("controller_edit.html", request,
             _ctx("Controller Edit", "controllers", index=idx, ctrl_id=ctrl_id,
                  controller_name=ctrl_name, ctrl_config=ctrl_data,
                  ctrl_defaults=ctrl_defaults, ctrl_flags=ctrl_flags,
                  client_id_resolved=client_id_resolved,
-                 ctrl_runtime=runtime_state))
-    return _render_page(request, "controllers.html", "Controllers", "controllers")
+                 ctrl_runtime=runtime_state,
+                 save_error=save_error))
+    save_error = request.query.get("save_error") == "1"
+    return _render_page(request, "controllers.html", "Controllers", "controllers", save_error=save_error)
 
 
 @_routes.post("/controllers")
@@ -872,7 +875,14 @@ async def controllers_post(request: web.Request) -> web.Response:
         ctrl_data["c034_dbtype"] = _safe_int(data.get("c034_dbtype", 0))
         ctrl_data["c034_dbname"] = data.get("c034_dbname", "")
     cfg.set_controller(idx, ctrl_data)
-    cfg.save()
+    try:
+        cfg.save()
+    except PermissionError as e:
+        logger.error("Controller config save failed: %s", e)
+        return web.HTTPFound(f"/controllers?save_error=1")
+    bus = get_event_bus()
+    await bus.publish(Event(type="CONTROLLER_CONFIG_CHANGED", controller_index=idx,
+                             data={"controller_config": ctrl_data}))
     return web.HTTPFound("/controllers")
 
 
@@ -1802,29 +1812,30 @@ async def devices_post(request: web.Request) -> web.Response:
             except Exception as e:
                 logger.warning(f"Plugin form processing error: {e}")
             try:
-                inst = entry["class"]()
-                inst._config = task_data
-                inst._task_index = idx
-                read_ev = Event(type="PLUGIN_READ", task_index=idx, data={"task_config": task_data})
-                result = await inst.on_plugin_read(read_ev)
-                if result and read_ev.data.get("values"):
-                    from rpieasy2.core.formula import evaluate as eval_formula
-                    device_props = entry["class"].DEVICE_PROPERTIES
-                    if device_props and device_props.formula_option:
-                        vals = read_ev.data["values"]
-                        for vk, rv in list(vals.items()):
-                            try:
-                                vi = int(vk)
-                            except (ValueError, TypeError):
-                                continue
-                            fstr = task_data.get(f"TDF{vi}", "")
-                            if fstr:
+                if task_data.get("TDE", task_data.get("enabled", True)):
+                    inst = entry["class"]()
+                    inst._config = task_data
+                    inst._task_index = idx
+                    read_ev = Event(type="PLUGIN_READ", task_index=idx, data={"task_config": task_data})
+                    result = await inst.on_plugin_read(read_ev)
+                    if result and read_ev.data.get("values"):
+                        from rpieasy2.core.formula import evaluate as eval_formula
+                        device_props = entry["class"].DEVICE_PROPERTIES
+                        if device_props and device_props.formula_option:
+                            vals = read_ev.data["values"]
+                            for vk, rv in list(vals.items()):
                                 try:
-                                    vals[vk] = eval_formula(fstr, float(rv))
-                                except Exception:
-                                    pass
-                        read_ev.data["values"] = vals
-                    _last_task_values[idx] = read_ev.data["values"]
+                                    vi = int(vk)
+                                except (ValueError, TypeError):
+                                    continue
+                                fstr = task_data.get(f"TDF{vi}", "")
+                                if fstr:
+                                    try:
+                                        vals[vk] = eval_formula(fstr, float(rv))
+                                    except Exception:
+                                        pass
+                            read_ev.data["values"] = vals
+                        _last_task_values[idx] = read_ev.data["values"]
             except Exception as e:
                 logger.warning(f"PLUGIN_READ after save failed: {e}")
     cfg.set_task(idx, task_data)
@@ -2482,7 +2493,15 @@ async def api_controller_set(request: web.Request) -> web.Response:
     cfg = get_config()
     data = await request.json()
     cfg.set_controller(_safe_int(request.match_info.get("idx", "-1"), -1), data)
-    cfg.save()
+    try:
+        cfg.save()
+    except PermissionError as e:
+        logger.error("Controller config save failed: %s", e)
+        return web.json_response({"status": "error", "message": "configuration file not writable"})
+    bus = get_event_bus()
+    await bus.publish(Event(type="CONTROLLER_CONFIG_CHANGED",
+                             controller_index=_safe_int(request.match_info.get("idx", "-1"), -1),
+                             data={"controller_config": data}))
     return web.json_response({"status": "ok"})
 
 

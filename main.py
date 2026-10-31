@@ -32,6 +32,8 @@ from rpieasy2.core.webserver import (
 logger = logging.getLogger("rpieasy2")
 scheduler = Scheduler()
 _active_plugins: dict[int, Any] = {}
+_active_controllers: dict[int, Any] = {}
+_controller_queue_task_ids: dict[int, int] = {}
 _last_task_read: dict[int, float] = {}
 _rules_engine: RulesEngine | None = None
 _hw_manager: Any = None
@@ -61,10 +63,105 @@ async def _init_controllers_async(hw, config) -> None:
             ctrl_cfg_with_unit["unit"] = config.data.get("system", {}).get("unit", 0)
             await bus.publish(Event(type="CONTROLLER_INIT", controller_index=idx,
                                     data={"controller_config": ctrl_cfg_with_unit,
-                                          "system_config": config}))
+                                          "system_config": config,
+                                          "target": inst}))
+            _active_controllers[idx] = inst
             logger.debug(f"Loaded controller '{inst.CONTROLLER_NAME}' (ID={cid}) idx={idx}")
         except Exception as e:
             logger.error(f"Failed to init controller {cid}: {e}")
+
+
+async def _init_single_controller(idx: int, ctrl_cfg: dict, hw: Any) -> None:
+    """Initialize a single controller at runtime (when added via web UI)."""
+    cid = ctrl_cfg.get("id")
+    if cid is None or not cid:
+        return
+    if not ctrl_cfg.get("controllerenabled", ctrl_cfg.get("enabled", True)):
+        return
+    entry = _controller_info.get(int(cid))
+    if entry is None:
+        _lazy_load_controller(int(cid))
+        entry = _controller_info.get(int(cid))
+    if entry is None:
+        logger.warning(f"Controller ID {cid} not found")
+        return
+    cls = entry.get("class")
+    if cls is None:
+        return
+    try:
+        inst = cls()
+        inst.set_hw_manager(hw)
+        inst.subscribe()
+        ctrl_cfg_with_unit = dict(ctrl_cfg)
+        ctrl_cfg_with_unit["unit"] = get_config().data.get("system", {}).get("unit", 0)
+        await get_event_bus().publish(Event(
+            type="CONTROLLER_INIT", controller_index=idx,
+            data={"controller_config": ctrl_cfg_with_unit,
+                  "system_config": get_config(),
+                  "target": inst}))
+        _active_controllers[idx] = inst
+        logger.info(f"Runtime loaded controller '{inst.CONTROLLER_NAME}' (ID={cid}) idx={idx}")
+
+        min_interval = float(ctrl_cfg.get("queue_min_interval", 1))
+        async def _process_queue(idx=idx):
+            await get_event_bus().publish(Event(type="CONTROLLER_PROCESS_QUEUE", controller_index=idx))
+        task_id = await scheduler.schedule_interval(min_interval, _process_queue)
+        _controller_queue_task_ids[idx] = task_id
+        logger.debug(f"Queue timer started for controller {idx} (interval={min_interval}s)")
+    except Exception as e:
+        logger.error(f"Failed to runtime init controller {cid}: {e}")
+
+
+def _shutdown_single_controller(idx: int) -> None:
+    """Shut down a single controller at runtime (when removed via web UI)."""
+    inst = _active_controllers.pop(idx, None)
+    if inst is not None:
+        inst._shutting_down = True
+        # Cancel the MQTT client loop task if it exists
+        loop_task = getattr(inst, "_client_loop_task", None)
+        if loop_task is not None and not loop_task.done():
+            loop_task.cancel()
+        try:
+            inst.unsubscribe()
+        except Exception:
+            pass
+        logger.info(f"Controller unloaded for slot {idx}")
+    task_id = _controller_queue_task_ids.pop(idx, None)
+    if task_id is not None:
+        scheduler.cancel(task_id)
+
+
+async def _handle_controller_config_changed(event: Event) -> None:
+    """Handle controller add/remove/change at runtime."""
+    idx = event.controller_index
+    if idx < 0:
+        return
+    cfg = get_config()
+    ctrls = cfg.data.get("controllers", [])
+    ctrl_cfg = ctrls[idx] if idx < len(ctrls) else {}
+    cid = ctrl_cfg.get("id", 0) if ctrl_cfg else 0
+    enabled = ctrl_cfg.get("controllerenabled", ctrl_cfg.get("enabled", True)) if ctrl_cfg else False
+
+    old_inst = _active_controllers.get(idx)
+    old_cid = old_inst.CONTROLLER_ID if old_inst else None
+
+    needs_shutdown = False
+    needs_init = False
+
+    if cid == 0 or not enabled:
+        if old_inst is not None:
+            needs_shutdown = True
+    elif old_inst is None:
+        needs_init = True
+    elif old_cid != cid:
+        needs_shutdown = True
+        needs_init = True
+
+    if needs_shutdown and old_inst is not None:
+        _shutdown_single_controller(idx)
+
+    if needs_init and cid and enabled:
+        await _init_single_controller(idx, ctrl_cfg, _hw_manager)
 
 
 async def _init_notifiers_async(hw, config) -> None:
@@ -87,7 +184,8 @@ async def _init_notifiers_async(hw, config) -> None:
             inst.set_hw_manager(hw)
             inst.subscribe()
             await bus.publish(Event(type="NOTIFIER_INIT", notifier_index=idx,
-                                    data={"notifier_config": notif_cfg}))
+                                    data={"notifier_config": notif_cfg,
+                                          "target": inst}))
             logger.debug(f"Loaded notifier '{inst.NOTIFIER_NAME}' (ID={nid}) idx={idx}")
         except Exception as e:
             logger.error(f"Failed to init notifier {nid}: {e}")
@@ -342,7 +440,9 @@ async def main():
     _log_boot("webserver started")
 
     bus = get_event_bus()
+    bus = get_event_bus()
     bus.subscribe("TASK_CONFIG_CHANGED", _handle_task_config_changed)
+    bus.subscribe("CONTROLLER_CONFIG_CHANGED", _handle_controller_config_changed, priority=0)
 
     global _active_plugins
     _active_plugins = await _init_task_plugins_async(hw, cfg)
@@ -362,11 +462,12 @@ async def main():
         if not ctrl_cfg.get("controllerenabled", ctrl_cfg.get("enabled", True)) or not ctrl_cfg.get("id"):
             continue
         min_interval = float(ctrl_cfg.get("queue_min_interval", 1))
-
+        
         async def _process_queue(idx=idx):
             await bus.publish(Event(type="CONTROLLER_PROCESS_QUEUE", controller_index=idx))
-
-        await scheduler.schedule_interval(min_interval, _process_queue)
+        
+        task_id = await scheduler.schedule_interval(min_interval, _process_queue)
+        _controller_queue_task_ids[idx] = task_id
         logger.debug(f"Queue timer started for controller {idx} (interval={min_interval}s)")
 
     from rpieasy2.core.p2p_service import start_p2p_service
@@ -404,8 +505,12 @@ async def main():
     async def _controller_send_listener(event: Event) -> bool | None:
         if event.task_index < 0:
             return None
-        task_config = cfg.data.get("tasks", [])[event.task_index] if event.task_index < len(cfg.data.get("tasks", [])) else {}
+        _cfg = get_config()
+        task_config = _cfg.data.get("tasks", [])[event.task_index] if event.task_index < len(_cfg.data.get("tasks", [])) else {}
         if not task_config:
+            return None
+        # Disabled tasks must not send data to any controller
+        if not task_config.get("TDE", task_config.get("enabled", True)):
             return None
         vals = event.data.get("values", {})
         if not vals:
@@ -413,11 +518,11 @@ async def main():
         LIVE_TASK_VALUES[event.task_index] = {k: str(v) for k, v in vals.items()}
         LIVE_TASK_NAMES[event.task_index] = task_config.get("name", task_config.get("TDN", f"Task{event.task_index + 1}"))
         bus2 = get_event_bus()
-        for ctrl_idx in range(len(cfg.data.get("controllers", []))):
-            ctrl_cfg = cfg.data["controllers"][ctrl_idx]
+        for ctrl_idx in range(len(_cfg.data.get("controllers", []))):
+            ctrl_cfg = _cfg.data["controllers"][ctrl_idx]
             if not ctrl_cfg.get("controllerenabled", ctrl_cfg.get("enabled", True)):
                 continue
-            if not task_config.get(f"TDSD{ctrl_idx}", True):
+            if not task_config.get(f"TDSD{ctrl_idx}", False):
                 continue
             parent_ctrl = ctrl_cfg.get("id", 0)
             send_ev = Event(

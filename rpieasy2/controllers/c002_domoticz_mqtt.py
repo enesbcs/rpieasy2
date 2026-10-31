@@ -7,6 +7,7 @@ from typing import Any
 
 import aiomqtt
 
+from rpieasy2.core import webserver as webserver_mod
 from rpieasy2.core.config import get_config
 from rpieasy2.core.controller_base import ControllerBase
 from rpieasy2.core.events import Event, get_event_bus
@@ -36,6 +37,40 @@ class C002DomoticzMQTT(ControllerBase):
         self._pending_subscriptions: list[str] = ["domoticz/out"]
         self._controller_index: int | None = None
         self._cmd_sub_topic: str | None = None
+        self._client_loop_task: asyncio.Task | None = None
+
+    def subscribe(self) -> None:
+        super().subscribe()
+
+    async def on_controller_config_changed(self, event: Event) -> bool | None:
+        """Restart the client loop so new settings are applied immediately.
+
+        aiomqtt 2.x clients must be closed from the task that opened the
+        context manager, so the loop task is cancelled (which exits the
+        ``async with`` cleanly) and started again to reconnect.
+        """
+        if getattr(self, "_shutting_down", False):
+            return None
+        if event.controller_index >= 0 and event.controller_index != getattr(self, "_controller_index", -1):
+            return None
+        # Check if controller is still enabled in live config before logging anything
+        try:
+            from rpieasy2.core.config import get_config
+            cfg = get_config()
+            ctrls = cfg.data.get("controllers", [])
+            idx = getattr(self, "_controller_index", None)
+            if idx is None or idx >= len(ctrls) or not ctrls[idx].get("id"):
+                return None  # Controller was removed
+            if not ctrls[idx].get("controllerenabled", ctrls[idx].get("enabled", True)):
+                return None  # Controller was disabled
+        except Exception:
+            pass
+        logger.info("Controller config changed, restarting MQTT client loop")
+        task = getattr(self, "_client_loop_task", None)
+        if task is not None and not task.done():
+            task.cancel()
+        self._client_loop_task = asyncio.create_task(self._run_client_loop())
+        return True
 
     async def on_controller_init(self, event: Event) -> bool | None:
         config: dict[str, Any] = event.data.get("controller_config", {})
@@ -51,7 +86,7 @@ class C002DomoticzMQTT(ControllerBase):
             if topic not in self._pending_subscriptions:
                 self._pending_subscriptions.append(topic)
         if config.get("controllerenabled", config.get("enabled", True)):
-            asyncio.create_task(self._run_client_loop())
+            self._client_loop_task = asyncio.create_task(self._run_client_loop())
         else:
             logger.info("MQTT controller disabled, not starting client loop")
         return True
@@ -60,12 +95,46 @@ class C002DomoticzMQTT(ControllerBase):
         backoff = 1
         while True:
             config = self._ctrl_config
+            # Re-read the live controller settings so web UI changes (host, port,
+            # credentials, enable flag) are picked up without a restart.
+            idx = getattr(self, "_controller_index", None)
+            if idx is not None:
+                try:
+                    ctrls = get_config().data.get("controllers", [])
+                    live = ctrls[idx] if 0 <= idx < len(ctrls) else None
+                    if live and live.get("id") == self.CONTROLLER_ID:
+                        config = live
+                        self._ctrl_config = config
+                    elif live is not None and live.get("id") != self.CONTROLLER_ID:
+                        # protocol changed away from this slot; idle until restart
+                        config = {"controllerenabled": False}
+                        self._ctrl_config = config
+                except Exception:
+                    pass
             if not config.get("controllerenabled", config.get("enabled", True)):
                 await asyncio.sleep(5)
                 continue
+            if config.get("enable_cmd_subscription"):
+                try:
+                    topic = resolve_controller_template("%sysname%/cmd", controller_config=config)
+                    if topic:
+                        self._cmd_sub_topic = topic
+                        if topic not in self._pending_subscriptions:
+                            self._pending_subscriptions.append(topic)
+                except Exception:
+                    pass
+            else:
+                self._cmd_sub_topic = None
             try:
-                host = config.get("controllerip", config.get("host", "127.0.0.1"))
-                port = int(config.get("controllerport", config.get("port", DEFAULT_MQTT_PORT)))
+                host = config.get("controllerip", config.get("host", "127.0.0.1")) or "127.0.0.1"
+                host = host.strip()
+                if not host:
+                    host = "127.0.0.1"
+                port_raw = config.get("controllerport", config.get("port", DEFAULT_MQTT_PORT))
+                try:
+                    port = int(port_raw) if port_raw else DEFAULT_MQTT_PORT
+                except (ValueError, TypeError):
+                    port = DEFAULT_MQTT_PORT
                 user = config.get("controlleruser", config.get("username", "")) or None
                 password = config.get("controllerpassword", config.get("password", "")) or None
                 use_tls = int(config.get("usetls", 0))
@@ -101,10 +170,26 @@ class C002DomoticzMQTT(ControllerBase):
                         except Exception as e:
                             logger.error("Domoticz MQTT subscribe failed for %s: %s", topic, e)
 
+                    try:
+                        if idx is not None:
+                            webserver_mod.set_controller_runtime_state(idx, {"connected": True, "last_error": ""})
+                    except Exception:
+                        pass
+
                     await self._listen()
             except Exception as e:
                 logger.error("Domoticz MQTT connection error: %s", e)
+                try:
+                    if idx is not None:
+                        webserver_mod.set_controller_runtime_state(idx, {"connected": False, "last_error": str(e)})
+                except Exception:
+                    pass
             finally:
+                try:
+                    if idx is not None:
+                        webserver_mod.set_controller_runtime_state(idx, {"connected": False})
+                except Exception:
+                    pass
                 self._client = None
 
             await asyncio.sleep(min(backoff, 30))

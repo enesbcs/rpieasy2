@@ -22,6 +22,13 @@ class NotifierBase:
         self._event_bus.subscribe("NOTIFIER_SEND", self._dispatch)
 
     async def _dispatch(self, event: Event) -> bool | None:
+        # Route init events to their target instance only (the bus is global,
+        # every notifier would otherwise re-init for every other slot).
+        # SEND events must still reach all notifiers.
+        if event.type == "NOTIFIER_INIT":
+            target = event.data.get("target")
+            if target is not None and target is not self:
+                return None
         handler = getattr(self, f"on_{event.type.lower()}", None)
         if handler:
             return await handler(event)

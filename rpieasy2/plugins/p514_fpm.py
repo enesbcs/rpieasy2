@@ -500,7 +500,7 @@ class P514FPM(PluginBase):
         for ctrl_idx, ctrl_cfg in enumerate(cfg.data.get("controllers", [])):
             if not ctrl_cfg.get("controllerenabled", ctrl_cfg.get("enabled", True)):
                 continue
-            if not self._config.get(f"TDSD{ctrl_idx}", True):
+            if not self._config.get(f"TDSD{ctrl_idx}", False):
                 continue
             send_ev = Event(
                 type="CONTROLLER_SEND",

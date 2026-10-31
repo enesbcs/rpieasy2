@@ -402,6 +402,23 @@ class C013ESPEasyP2P(ControllerBase):
             "various_bits": [],
         }
 
+    def _is_c013_enabled(self) -> bool:
+        """Check if the C013 P2P controller is actually in the controller list
+        and enabled. P2P sensor operations should only proceed when C013 is
+        active (added to controller list with controllerenabled=True)."""
+        try:
+            cfg = get_config()
+            ctrls = cfg.data.get("controllers", [])
+            idx = getattr(self, "_controller_index", None)
+            if idx is None or idx < 0 or idx >= len(ctrls):
+                return False
+            ctrl = ctrls[idx]
+            return ctrl.get("id") == self.CONTROLLER_ID and ctrl.get(
+                "controllerenabled", ctrl.get("enabled", True)
+            )
+        except Exception:
+            return False
+
     def _get_value_names(self, task_config: dict, device_number: int) -> list[str]:
         value_names = [task_config.get(f"TDVN{i}", "") for i in range(1, VARS_PER_TASK + 1)]
         if not any(value_names):
@@ -422,6 +439,9 @@ class C013ESPEasyP2P(ControllerBase):
         return value_names
 
     async def on_controller_send(self, event: Event) -> bool | None:
+        # Only send sensor data if C013 controller is actually enabled
+        if not self._is_c013_enabled():
+            return False
         config = event.data.get("task_config", {})
         values = event.data.get("values", {})
         idx_config = config.get("task_values", {}).get("idx", config.get("idx", 0))
@@ -469,39 +489,48 @@ class C013ESPEasyP2P(ControllerBase):
         return True
 
     async def on_task_config_changed(self, event: Event) -> bool | None:
-        task_config = event.data.get("task_config", {})
-        task_index = event.task_index
-        if task_index < 0:
+        try:
+            # Only broadcast sensor info if C013 controller is actually enabled
+            if not self._is_c013_enabled():
+                return False
+            task_config = event.data.get("task_config", {})
+            task_index = event.task_index
+            if task_index < 0:
+                return False
+            if not task_config:
+                stale = [k for k, v in _remote_to_local.items() if v == task_index]
+                for k in stale:
+                    del _remote_to_local[k]
+                return False
+            device_number = int(task_config.get("plugin_id", task_config.get("TDSF", 0)))
+            if device_number == INVALID_PLUGIN_ID:
+                return False
+            value_names = self._get_value_names(task_config, device_number)
+            extended = self._build_extended_fields(task_config)
+            info_build = max(self._build, BUILD_EXTRA_SETTINGS) if any(v != 0 for v in extended["plugin_config"]) else self._build
+            payload_info = _make_sensor_info_payload(
+                source_unit=self._unit,
+                source_task=task_index,
+                dest_task=task_index,
+                device_number=device_number,
+                task_name=task_config.get("TDN", task_config.get("name", "task")),
+                value_names=value_names[:VARS_PER_TASK],
+                sensor_type=int(task_config.get("TDNUM_out", 1)),
+                idx=int(task_config.get("idx", 0)),
+                build=info_build,
+                value_decimals=extended["value_decimals"],
+                plugin_config=extended["plugin_config"],
+            )
+            p2p_sendto(payload_info)
+            logger.info(f"C013 broadcast sensor info for task {task_index} (device {device_number})")
+            return True
+        except Exception as e:
+            logger.error("C013 P2P task config changed handler error: %s", e)
             return False
-        if not task_config:
-            stale = [k for k, v in _remote_to_local.items() if v == task_index]
-            for k in stale:
-                del _remote_to_local[k]
-            return False
-        device_number = int(task_config.get("plugin_id", task_config.get("TDSF", 0)))
-        if device_number == INVALID_PLUGIN_ID:
-            return False
-        value_names = self._get_value_names(task_config, device_number)
-        extended = self._build_extended_fields(task_config)
-        info_build = max(self._build, BUILD_EXTRA_SETTINGS) if any(v != 0 for v in extended["plugin_config"]) else self._build
-        payload_info = _make_sensor_info_payload(
-            source_unit=self._unit,
-            source_task=task_index,
-            dest_task=task_index,
-            device_number=device_number,
-            task_name=task_config.get("TDN", task_config.get("name", "task")),
-            value_names=value_names[:VARS_PER_TASK],
-            sensor_type=int(task_config.get("TDNUM_out", 1)),
-            idx=int(task_config.get("idx", 0)),
-            build=info_build,
-            value_decimals=extended["value_decimals"],
-            plugin_config=extended["plugin_config"],
-        )
-        p2p_sendto(payload_info)
-        logger.info(f"C013 broadcast sensor info for task {task_index} (device {device_number})")
-        return True
 
     async def on_p2p_sensor_info_pull(self, event: Event) -> bool | None:
+        if not self._is_c013_enabled():
+            return False
         data: bytes = event.data.get("raw", b"")
         parsed = parse_pull_header(data)
         if parsed is None:
@@ -542,6 +571,8 @@ class C013ESPEasyP2P(ControllerBase):
         return True
 
     async def on_p2p_sensor_data_pull(self, event: Event) -> bool | None:
+        if not self._is_c013_enabled():
+            return False
         data: bytes = event.data.get("raw", b"")
         parsed = parse_pull_header(data)
         if parsed is None:
@@ -586,6 +617,8 @@ class C013ESPEasyP2P(ControllerBase):
         return True
 
     async def on_p2p_sensor_info(self, event: Event) -> bool | None:
+        if not self._is_c013_enabled():
+            return False
         data: bytes = event.data.get("raw", b"")
         addr: tuple[str, int] = event.data.get("addr", ("0.0.0.0", 0))
         info = parse_sensor_info(data)
@@ -649,6 +682,8 @@ class C013ESPEasyP2P(ControllerBase):
         return True
 
     async def on_p2p_sensor_data(self, event: Event) -> bool | None:
+        if not self._is_c013_enabled():
+            return False
         data: bytes = event.data.get("raw", b"")
         addr: tuple[str, int] = event.data.get("addr", ("0.0.0.0", 0))
         info = parse_sensor_data(data)

@@ -57,6 +57,40 @@ class C005HomeAssistantMQTT(ControllerBase):
         # track which command topics we've already subscribed to to avoid subscribe spam
         self._subscribed_cmd_topics: set[str] = set()
         self._cmd_sub_topic: str | None = None
+        self._client_loop_task: asyncio.Task | None = None
+
+    def subscribe(self) -> None:
+        super().subscribe()
+
+    async def on_controller_config_changed(self, event: Event) -> bool | None:
+        """Restart the client loop so new settings are applied immediately.
+
+        aiomqtt 2.x clients must be closed from the task that opened the
+        context manager, so the loop task is cancelled (which exits the
+        ``async with`` cleanly) and started again to reconnect.
+        """
+        if getattr(self, "_shutting_down", False):
+            return None
+        if event.controller_index >= 0 and event.controller_index != getattr(self, "_controller_index", -1):
+            return None
+        # Check if controller is still enabled in live config before logging anything
+        try:
+            from rpieasy2.core.config import get_config
+            cfg = get_config()
+            ctrls = cfg.data.get("controllers", [])
+            idx = getattr(self, "_controller_index", None)
+            if idx is None or idx >= len(ctrls) or not ctrls[idx].get("id"):
+                return None  # Controller was removed
+            if not ctrls[idx].get("controllerenabled", ctrls[idx].get("enabled", True)):
+                return None  # Controller was disabled
+        except Exception:
+            pass
+        logger.info("Controller config changed, restarting MQTT client loop")
+        task = getattr(self, "_client_loop_task", None)
+        if task is not None and not task.done():
+            task.cancel()
+        self._client_loop_task = asyncio.create_task(self._run_client_loop())
+        return True
 
     async def on_controller_init(self, event: Event) -> bool | None:
         config: dict[str, Any] = event.data.get("controller_config", {})
@@ -96,7 +130,7 @@ class C005HomeAssistantMQTT(ControllerBase):
             self._cmd_sub_topic = resolve_controller_template("%sysname%/cmd", controller_config=config)
         # start MQTT client loop only if enabled
         if config.get("controllerenabled", config.get("enabled", True)):
-            asyncio.create_task(self._run_client_loop())
+            self._client_loop_task = asyncio.create_task(self._run_client_loop())
         else:
             logger.info("MQTT controller disabled, not starting client loop")
         return True
@@ -236,6 +270,22 @@ class C005HomeAssistantMQTT(ControllerBase):
         backoff = 1
         while True:
             config = self._ctrl_config or {}
+            # Re-read the live controller settings so web UI changes (host, port,
+            # credentials, enable flag) are picked up without a restart.
+            idx = getattr(self, "_controller_index", None)
+            if idx is not None:
+                try:
+                    ctrls = get_config().data.get("controllers", [])
+                    live = ctrls[idx] if 0 <= idx < len(ctrls) else None
+                    if live and live.get("id") == self.CONTROLLER_ID:
+                        config = live
+                        self._ctrl_config = config
+                    elif live is not None and live.get("id") != self.CONTROLLER_ID:
+                        # protocol changed away from this slot; idle until restart
+                        config = {"controllerenabled": False}
+                        self._ctrl_config = config
+                except Exception:
+                    pass
             if not config.get("controllerenabled", config.get("enabled", True)):
                 await asyncio.sleep(5)
                 continue
@@ -244,9 +294,28 @@ class C005HomeAssistantMQTT(ControllerBase):
                 host = host.strip()
                 if not host:
                     host = "127.0.0.1"
-                port = int(config.get("controllerport", config.get("port", DEFAULT_MQTT_PORT)))
+                port_raw = config.get("controllerport", config.get("port", DEFAULT_MQTT_PORT))
+                try:
+                    port = int(port_raw) if port_raw else DEFAULT_MQTT_PORT
+                except (ValueError, TypeError):
+                    port = DEFAULT_MQTT_PORT
                 user = config.get("controlleruser", config.get("username", "")) or None
                 password = config.get("controllerpassword", config.get("password", "")) or None
+
+                # Keep availability/LWT/cmd topics in sync with the saved config
+                will_topic = config.get("controllerlwttopic", "")
+                self._availability_topic = will_topic or (
+                    (config.get("controllersubscribe", "").split("/")[0] or "rpieasy2") + "/status"
+                )
+                self._online_msg = config.get("onlinemessage", "online") or "online"
+                self._offline_msg = config.get("lwtdisconnectmessage", "offline") or "offline"
+                if config.get("enable_cmd_subscription"):
+                    try:
+                        self._cmd_sub_topic = resolve_controller_template("%sysname%/cmd", controller_config=config)
+                    except Exception:
+                        pass
+                else:
+                    self._cmd_sub_topic = None
 
                 will = None
                 will_msg = config.get("lwtdisconnectmessage", "offline") or "offline"
@@ -321,12 +390,8 @@ class C005HomeAssistantMQTT(ControllerBase):
                 except Exception:
                     pass
             finally:
-                # cleanup client
-                try:
-                    if self._client:
-                        await self._client.disconnect()
-                except Exception:
-                    pass
+                # cleanup client (the aiomqtt context manager already disconnected
+                # on exit; the Client object has no public disconnect() in 2.x)
                 self._client = None
 
             # Exponential backoff with cap

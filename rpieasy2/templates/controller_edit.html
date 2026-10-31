@@ -1,5 +1,10 @@
 {% extends "base.html" %}
 {% block content %}
+{% if save_error %}
+<div style='background:#f8d7da;border:1px solid #dc3545;padding:8px;border-radius:4px;color:#721c24;margin-bottom:10px;'>
+    <strong>Error:</strong> Saving controller settings failed – the configuration file is not writable (permission error).
+</div>
+{% endif %}
 <form name='frmselect' method='post'>
 <script>
 function dept_onchange(form) { form.submit(); }
