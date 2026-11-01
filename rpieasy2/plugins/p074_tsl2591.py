@@ -160,4 +160,6 @@ class P074TSL2591(PluginBase):
         return True
 
     def get_task_values(self, task_config: dict[str, Any]) -> dict[str, Any]:
+        if self._last_task_values:
+            return dict(self._last_task_values)
         return {"Lux": 0.0, "Full": 0, "Visible": 0, "IR": 0}

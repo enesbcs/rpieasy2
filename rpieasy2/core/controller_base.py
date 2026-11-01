@@ -85,6 +85,31 @@ class ControllerBase:
         max_retries = int(config.get("maxretries", config.get("queue_max_retries", 10)))
         self._send_queue = ControllerQueue(min_interval, max_depth, max_retries)
 
+    def get_controller_task_idx(self, task_config: dict[str, Any],
+                                controller_index: int | None = None) -> int:
+        """Return the IDX a task assigns to this controller slot.
+
+        The device edit page ("Controller Assignment") stores the per-task
+        controller IDX in ``TDID{n}`` where ``n`` is the 0-based controller
+        slot index (ESPEasy's TaskDeviceControllerID). Legacy
+        ``task_values.idx`` / ``idx`` keys are kept as fallbacks for older
+        configs; returns 0 when no IDX is set.
+        """
+        if controller_index is None or controller_index < 0:
+            controller_index = getattr(self, "_controller_index", -1)
+        if controller_index is not None and controller_index >= 0:
+            raw: Any = task_config.get(f"TDID{controller_index}")
+            if raw not in (None, ""):
+                try:
+                    return int(raw)
+                except (ValueError, TypeError):
+                    pass
+        raw = task_config.get("task_values", {}).get("idx", task_config.get("idx", 0))
+        try:
+            return int(raw)
+        except (ValueError, TypeError):
+            return 0
+
     def enqueue_send(self, data: dict) -> bool:
         if self._send_queue is None:
             return False

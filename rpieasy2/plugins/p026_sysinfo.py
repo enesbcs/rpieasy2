@@ -306,6 +306,8 @@ class P026Sysinfo(PluginBase):
         return True
 
     def get_task_values(self, task_config: dict[str, Any]) -> dict[str, Any]:
+        if self._last_task_values:
+            return dict(self._last_task_values)
         options_map = {o["value"]: o["label"] for o in _VALUE_OPTIONS}
         values = {}
         n = SENSOR_TYPE_TO_VALUE_COUNT.get(int(task_config.get("TDNUM_out", SENSOR_TYPE_QUAD)), 4)

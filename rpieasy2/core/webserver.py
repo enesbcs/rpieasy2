@@ -826,6 +826,21 @@ async def controllers_post(request: web.Request) -> web.Response:
     ctrl_id = _safe_int(data.get("protocol", 0))
     _lazy_load_controller(ctrl_id)
     ctrl_defaults = _get_controller_defaults(ctrl_id)
+    # When the protocol of a slot is switched, the form is pre-filled with the
+    # OLD protocol's values; carrying them into the new protocol leaves stale
+    # topics (e.g. "%sysname%/%tskname%/%valname%" copied into Domoticz MQTT).
+    # If a template field was left unchanged, reset it to the new protocol's
+    # default instead.
+    old_ctrl = cfg.get_controller(idx) or {}
+    old_id = _safe_int(old_ctrl.get("id", 0))
+    proto_changed = bool(old_id) and old_id != ctrl_id
+
+    def _tpl_field(name: str) -> str:
+        posted = data.get(name) or ""
+        if proto_changed and ctrl_defaults.get(name) and posted == (old_ctrl.get(name) or ""):
+            return ctrl_defaults[name]
+        return posted or ctrl_defaults.get(name, "")
+
     ctrl_data = {
         "id": ctrl_id,
         "protocol": _controller_info.get(ctrl_id, {}).get("name", ""),
@@ -848,8 +863,8 @@ async def controllers_post(request: web.Request) -> web.Response:
         "controllerpassword": data.get("controllerpassword", ""),
         "uniqueclientidonreconnect": "uniqueclientidonreconnect" in data,
         "publishretainflag": "publishretainflag" in data,
-        "controllersubscribe": data.get("controllersubscribe") or ctrl_defaults.get("controllersubscribe", ""),
-        "controllerpublish": data.get("controllerpublish") or ctrl_defaults.get("controllerpublish", ""),
+        "controllersubscribe": _tpl_field("controllersubscribe"),
+        "controllerpublish": _tpl_field("controllerpublish"),
         "controllerlwttopic": data.get("controllerlwttopic", ""),
         "lwtconnectmessage": data.get("lwtconnectmessage", ""),
         "lwtdisconnectmessage": data.get("lwtdisconnectmessage", ""),

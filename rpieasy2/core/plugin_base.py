@@ -19,6 +19,7 @@ class PluginBase:
         self._hw: HWManager | None = None
         self._task_index: int = -1
         self._subscriptions: list[tuple[str, Any]] = []
+        self._last_task_values: dict[str, Any] = {}
 
     def set_hw_manager(self, hw: HWManager) -> None:
         self._hw = hw
@@ -67,6 +68,12 @@ class PluginBase:
                     stats.push(values)
             if event.type == "PLUGIN_READ" and self.DEVICE_PROPERTIES.formula_option:
                 self._apply_formulas(event)
+            if event.type == "PLUGIN_READ":
+                # Cache the last successful measurement so get_task_values()
+                # can report real values instead of hardcoded zero defaults.
+                read_values = event.data.get("values")
+                if read_values:
+                    self._last_task_values = dict(read_values)
             if collect_timing:
                 elapsed = time.perf_counter() - t0
                 from rpieasy2.core.timing_stats import get_timing_stats, init_timing_stats
@@ -177,7 +184,14 @@ class PluginBase:
         return None
 
     def get_task_values(self, task_config: dict[str, Any]) -> dict[str, Any]:
-        return {}
+        """Return the latest successfully measured task values.
+
+        Plugins that override this should prefer ``self._last_task_values``
+        (populated after every successful PLUGIN_READ) and keep their
+        zeroed dict only as a fallback for value names before the first
+        successful read.
+        """
+        return dict(self._last_task_values)
 
     def unsubscribe(self) -> None:
         for et, h in list(self._subscriptions):

@@ -83,6 +83,8 @@ class P024MLX90614(PluginBase):
         return True
 
     def get_task_values(self, task_config: dict[str, Any]) -> dict[str, Any]:
+        if self._last_task_values:
+            return dict(self._last_task_values)
         option = int(task_config.get("option", 0))
         if option == 1:
             return {"Ambient": 0.0}

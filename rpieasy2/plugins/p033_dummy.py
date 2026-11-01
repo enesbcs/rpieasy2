@@ -150,6 +150,8 @@ class P033Dummy(PluginBase):
         return True
 
     def get_task_values(self, task_config: dict[str, Any]) -> dict[str, Any]:
+        if self._last_task_values:
+            return dict(self._last_task_values)
         values = {}
         n = SENSOR_TYPE_TO_VALUE_COUNT.get(task_config.get("TDNUM_out", 1), 1)
         for i in range(n):

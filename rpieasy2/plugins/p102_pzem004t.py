@@ -363,6 +363,8 @@ class P102PZEM(PluginBase):
         return True
 
     def get_task_values(self, task_config: dict[str, Any]) -> dict[str, Any]:
+        if self._last_task_values:
+            return dict(self._last_task_values)
         values: dict[str, Any] = {}
         queries = self._queries_from_config(task_config)
         for i in range(self._get_num_values_from(task_config)):

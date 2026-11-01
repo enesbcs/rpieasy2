@@ -59,16 +59,18 @@ class C001DomoticzHTTP(ControllerBase):
     async def on_controller_send(self, event: Event) -> bool | None:
         config: dict[str, Any] = event.data.get("task_config", {})
         values: dict[str, Any] = event.data.get("values", {})
-        ctrl_config = config.get("controller", {})
+        # Controller settings ride inside "values" (see the CONTROLLER_SEND
+        # event built by main.py); the task config never has them.
+        ctrl_config = values.get("controller", {}) or getattr(self, "_ctrl_config", {})
         host = ctrl_config.get("controllerip", ctrl_config.get("host", "127.0.0.1"))
         port = int(ctrl_config.get("controllerport", ctrl_config.get("port", DEFAULT_DOMOTICZ_PORT)))
         username = ctrl_config.get("controlleruser", ctrl_config.get("username", ""))
         password = ctrl_config.get("controllerpassword", ctrl_config.get("password", ""))
-        idx = config.get("task_values", {}).get("idx", config.get("idx", "0"))
+        idx = self.get_controller_task_idx(config, event.controller_index)
         use_tls = int(ctrl_config.get("usetls", 0))
 
-        if not idx or idx == "0":
-            logger.error("Domoticz HTTP: IDX cannot be zero!")
+        if not idx:
+            logger.error("Domoticz HTTP: IDX cannot be zero! (set it in Device Edit -> Controller Assignment)")
             return False
 
         sensor_type = int(config.get("TDSF", 0))

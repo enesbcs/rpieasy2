@@ -159,4 +159,6 @@ class P027INA219(PluginBase):
         return True
 
     def get_task_values(self, task_config: dict[str, Any]) -> dict[str, Any]:
+        if self._last_task_values:
+            return dict(self._last_task_values)
         return {"Voltage": 0.0, "Current": 0.0, "Power": 0.0}

@@ -17,6 +17,12 @@ from rpieasy2.core.system_vars import resolve_controller_template
 
 logger = logging.getLogger("rpieasy2.controller.c002")
 
+DOMOTICZ_DEFAULT_IN_TOPIC = "domoticz/in"
+# Macros that make the publish topic per-task/per-value. Domoticz's MQTT
+# server only reads a single input topic, so such templates (typically left
+# over from another protocol, e.g. Home Assistant) can never deliver data.
+_DOMOTICZ_INVALID_TOPIC_MACROS = ("%tskname%", "%valname%", "%devclass%", "%unique_id%")
+
 
 class C002DomoticzMQTT(ControllerBase):
     CONTROLLER_ID = 2
@@ -238,11 +244,8 @@ class C002DomoticzMQTT(ControllerBase):
                     send_flag = bool(task.get("TDSD"))
             if not send_flag:
                 continue
-            task_idx_val = task.get("task_values", {}).get("idx", task.get("idx", 0))
-            try:
-                task_idx_val = int(task_idx_val)
-            except (ValueError, TypeError):
-                continue
+            task_idx_val = self.get_controller_task_idx(
+                task, ctrl_idx if ctrl_idx is not None else -1)
             if task_idx_val != idx:
                 continue
             plugin_id = int(task.get("plugin_id", task.get("plugin", 0)) or 0)
@@ -276,6 +279,23 @@ class C002DomoticzMQTT(ControllerBase):
                     await bus.publish(ev)
                     logger.info("Domoticz MQTT: switch command for task %d: pin=%d value=%d", ti, pin, action_value)
 
+    def _get_publish_topic(self, ctrl_config: dict[str, Any]) -> str:
+        """Resolve the Domoticz input topic from controller settings.
+
+        Falls back to ``domoticz/in`` when the configured topic is empty or
+        contains per-task/per-value macros (stale leftovers from another
+        protocol) that Domoticz cannot consume.
+        """
+        topic_template = (ctrl_config.get("controllerpublish") or
+                          ctrl_config.get("topic") or DOMOTICZ_DEFAULT_IN_TOPIC)
+        lowered = topic_template.lower()
+        if any(m in lowered for m in _DOMOTICZ_INVALID_TOPIC_MACROS):
+            logger.warning("Domoticz MQTT: publish topic '%s' is not Domoticz-compatible, "
+                           "using '%s' instead (fix it on the Controller Edit page)",
+                           topic_template, DOMOTICZ_DEFAULT_IN_TOPIC)
+            return DOMOTICZ_DEFAULT_IN_TOPIC
+        return topic_template
+
     async def on_controller_send(self, event: Event) -> bool | None:
         if not self._client:
             return False
@@ -295,15 +315,22 @@ class C002DomoticzMQTT(ControllerBase):
 
         config: dict[str, Any] = event.data.get("task_config", {})
         values: dict[str, Any] = event.data.get("values", {})
-        ctrl_config = config.get("controller", {})
-        topic_template = ctrl_config.get("controllerpublish", ctrl_config.get("topic", "domoticz/in"))
-        idx = config.get("task_values", {}).get("idx", config.get("idx", "0"))
+        # Controller settings ride inside "values" (see the CONTROLLER_SEND
+        # event built by main.py / p514); the task config never has them.
+        ctrl_config = values.get("controller", {}) or self._ctrl_config
+        topic_template = self._get_publish_topic(ctrl_config)
+        idx = self.get_controller_task_idx(config, event.controller_index)
+        if not idx:
+            logger.warning("Domoticz MQTT: task %s has no IDX configured for controller slot %s "
+                           "(set it in Device Edit -> Controller Assignment), skipping send",
+                           config.get("TDN", event.task_index), event.controller_index)
+            return False
         retain_flag = int(ctrl_config.get("publishretainflag", 0))
 
         from rpieasy2.core.util import get_wifi_rssi
         rssi = get_wifi_rssi() or 0
 
-        payload = {"idx": int(idx), "nvalue": 0}
+        payload = {"idx": idx, "nvalue": 0}
         named_values = values.get("named_values", values)
         svalue = ";".join(str(v) for v in named_values.values())
         payload["svalue"] = svalue
@@ -313,6 +340,8 @@ class C002DomoticzMQTT(ControllerBase):
         topic = resolve_controller_template(topic_template, task_index=event.task_index,
                                              task_config=config, task_values=values,
                                              controller_config=ctrl_config)
+        if not topic:
+            topic = DOMOTICZ_DEFAULT_IN_TOPIC
         try:
             await self._client.publish(topic, json.dumps(payload), retain=bool(retain_flag))
             return True

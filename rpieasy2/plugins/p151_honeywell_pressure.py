@@ -83,4 +83,6 @@ class P151HoneywellPressure(PluginBase):
         return True
 
     def get_task_values(self, task_config: dict[str, Any]) -> dict[str, Any]:
+        if self._last_task_values:
+            return dict(self._last_task_values)
         return {"Pressure": 0.0, "Temperature": 0.0}

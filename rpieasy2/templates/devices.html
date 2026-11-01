@@ -73,7 +73,17 @@ fetchValues();
         <TD>{{ pinfo.name if pinfo else "ID: " + pid|string if pid else "" }}</TD>
         <TD>{{ task.get("TDN", task.get("name", "")) }}</TD>
         <TD>{{ task.get("port", "") }}</TD>
-        <TD>{{ task.get("controller", task.get("idx", "")) }}</TD>
+        <TD>
+            {% set ns = namespace(parts=[]) %}
+            {% for ctrl in config.get("controllers", []) %}
+            {% if ctrl.get("id") and task.get("TDSD" ~ loop.index0) and (task.get("TDID" ~ loop.index0, 0)|int) %}
+            {% set cinfo = controllers.get(ctrl.get("id")|int) %}
+            {% set cname = cinfo.get("name") if cinfo else ("Ctrl " ~ (loop.index0 + 1)) %}
+            {% set ns.parts = ns.parts + [cname ~ " (" ~ task.get("TDID" ~ loop.index0, 0) ~ ")"] %}
+            {% endif %}
+            {% endfor %}
+            {{ ns.parts|join("<br>")|safe }}
+        </TD>
         <TD>{{ task.get("pin", "") }}</TD>
         <TD>
             {% for vi in range(_num_out) %}

@@ -271,6 +271,8 @@ class P045MPU6050(PluginBase):
             self._max_vals = [0.0, 0.0, 0.0]
 
     def get_task_values(self, task_config: dict[str, Any]) -> dict[str, Any]:
+        if self._last_task_values:
+            return dict(self._last_task_values)
         return {"State": 0, "RangeX": 0.0, "RangeY": 0.0, "RangeZ": 0.0,
                 "AccelX": 0.0, "AccelY": 0.0, "AccelZ": 0.0,
                 "GForceX": 0.0, "GForceY": 0.0, "GForceZ": 0.0,

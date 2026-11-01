@@ -128,4 +128,6 @@ class P169AS3935(PluginBase):
         return True
 
     def get_task_values(self, task_config: dict[str, Any]) -> dict[str, Any]:
+        if self._last_task_values:
+            return dict(self._last_task_values)
         return {"DistanceNear": 0, "DistanceFar": 0, "Lightning": 0, "Total": 0}
