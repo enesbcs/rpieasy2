@@ -485,6 +485,7 @@ async def main():
     _log_boot("initial PLUGIN_READ done")
 
     _rules_prev_vals: dict[int, dict[str, str]] = {}
+    _rules_suppress_read_event: set[int] = set()
 
     async def _rules_plugin_read_listener(event: Event) -> bool | None:
         global _rules_engine
@@ -494,10 +495,15 @@ async def main():
                 prev = _rules_prev_vals.get(event.task_index, {})
                 _rules_engine.update_task_value(event.task_index, vals)
                 _rules_prev_vals[event.task_index] = {k: str(v) for k, v in vals.items()}
+                if event.task_index in _rules_suppress_read_event:
+                    return None
                 tname = _rules_engine._task_names.get(event.task_index, f"Task{event.task_index}")
                 for vname, vval in vals.items():
                     if str(prev.get(vname, "")) != str(vval):
-                        await _rules_engine.fire_event(f"{tname}#{vname}")
+                        await _rules_engine.fire_event(
+                            f"{tname}#{vname}={vval}",
+                            {"event_values": [str(vval)]},
+                        )
         return None
 
     bus.subscribe("PLUGIN_READ", _rules_plugin_read_listener, priority=10)
@@ -546,15 +552,39 @@ async def main():
     async def _rules_gpio_change_listener(event: Event) -> bool | None:
         global _rules_engine
         if _rules_engine and _rules_engine.is_enabled() and event.task_index >= 0:
-            state = event.data.get("state")
+            data = event.data or {}
+            state = data.get("event_value", data.get("state"))
             if state is not None:
-                _rules_engine.update_task_value(event.task_index, {"Switch": state})
-                tname = _rules_engine._task_names.get(event.task_index, f"Task{event.task_index}")
-                await _rules_engine.fire_event(f"{tname}#Switch")
-                _rules_prev_vals[event.task_index] = {"Switch": str(state)}
-                await get_event_bus().publish(
-                    Event(type="PLUGIN_READ", task_index=event.task_index)
-                )
+                task_config = _rules_engine._task_configs.get(event.task_index, {})
+                value_name = data.get("value_name")
+                if not value_name:
+                    existing = _rules_engine._task_values.get(event.task_index, {})
+                    if existing:
+                        value_name = next(iter(existing))
+                if not value_name:
+                    value_name = task_config.get("TDVN1") or task_config.get("value_name") or "State"
+
+                merged = dict(_rules_engine._task_values.get(event.task_index, {}))
+                merged[value_name] = str(state)
+                _rules_engine.update_task_value(event.task_index, merged)
+
+                tname = _rules_engine._task_names.get(
+                    event.task_index, f"Task{event.task_index}")
+                event_data: dict[str, Any] = {"event_values": [str(state)]}
+                for key in ("long_press", "double_click", "safe_button"):
+                    if key in data:
+                        event_data[key] = data[key]
+                await _rules_engine.fire_event(
+                    f"{tname}#{value_name}={state}", event_data)
+                _rules_prev_vals[event.task_index] = merged
+
+                _rules_suppress_read_event.add(event.task_index)
+                try:
+                    await get_event_bus().publish(
+                        Event(type="PLUGIN_READ", task_index=event.task_index)
+                    )
+                finally:
+                    _rules_suppress_read_event.discard(event.task_index)
         return None
 
     bus.subscribe("PLUGIN_GPIO_CHANGE", _rules_gpio_change_listener)

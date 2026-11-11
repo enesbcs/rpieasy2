@@ -14,8 +14,15 @@ from rpieasy2.core.system_chars import resolve_special_chars
 
 logger = logging.getLogger("rpieasy2.system_vars")
 
-VAR_PATTERN = re.compile(r"%(\w+)%")
-TASKVAL_PATTERN = re.compile(r"\[(\w+)#(\w+)\]")
+# ESPEasy allows variable names containing letters, digits, underscores and
+# a few separator characters (# . - /).  Keep the leading character strict so
+# ordinary percentages such as "50%" are not mistaken for variables.
+VAR_PATTERN = re.compile(r"%([A-Za-z_][A-Za-z0-9_#.\-/]*)%")
+# Task/value names may contain nearly anything (e.g. "°C", "%", "/", "-").
+TASKVAL_PATTERN = re.compile(r"\[([^\[\]#]+)#([^\[\]]+)\]")
+# ``%eventvalue%`` is an alias for ``%eventvalue1%``.  The optional
+# ``|default`` suffix is used when the requested value does not exist.
+EVENTVALUE_PATTERN = re.compile(r"%eventvalue(\d*)(?:\|([^%]*))?%", re.IGNORECASE)
 
 _START_TIME: float = time.time()
 
@@ -231,6 +238,62 @@ def resolve_system_var(name: str) -> str:
     return ""
 
 
+def _parse_eventvalue_name(name: str) -> tuple[str, str] | None:
+    """Split ``eventvalueN`` / ``eventvalueN|default`` into (N, default).
+
+    Returns ``None`` when *name* is not an event-value placeholder.
+    """
+    m = re.fullmatch(r"eventvalue(\d*)(?:\|(.*))?", name.strip(), re.IGNORECASE)
+    if not m:
+        return None
+    return m.group(1), m.group(2) or ""
+
+
+def _event_value_lookup(
+    nr_text: str, default: str, event_values: list[str] | None
+) -> str:
+    """Return an event value following ESPEasy's substitution rules.
+
+    ``0`` expands to the whole comma-joined argument string, a bare
+    placeholder maps to the first value, and a missing value falls back to
+    the parsed default (``0`` when no default was given).
+    """
+    if nr_text == "0":
+        return ",".join(str(v) for v in (event_values or []))
+    idx = int(nr_text) if nr_text else 1
+    if idx <= 0:
+        return ""
+    if event_values and idx <= len(event_values):
+        return str(event_values[idx - 1])
+    return default
+
+
+def resolve_event_value(name: str, event_values: list[str] | None) -> str | None:
+    """Resolve ``eventvalueN`` (without % signs) from an event value list.
+
+    Returns ``None`` when *name* is not an event-value placeholder so the
+    caller can continue with normal variable resolution.
+    """
+    parsed = _parse_eventvalue_name(name)
+    if parsed is None:
+        return None
+    nr_text, default = parsed
+    return _event_value_lookup(nr_text, default or "0", event_values)
+
+
+def resolve_event_values(text: str, event_values: list[str] | None) -> str:
+    if "%" not in text:
+        return text
+
+    def _replace(m: re.Match) -> str:
+        default = m.group(2)
+        return _event_value_lookup(
+            m.group(1), default if default is not None else "0", event_values
+        )
+
+    return EVENTVALUE_PATTERN.sub(_replace, text)
+
+
 def resolve_taskval(
     text: str,
     task_values: dict[int, dict[str, str]] | None = None,
@@ -259,7 +322,12 @@ def resolve_template(
     text: str,
     task_values: dict[int, dict[str, str]] | None = None,
     task_names: dict[int, str] | None = None,
+    event_values: list[str] | None = None,
 ) -> str:
+    # Always substitute event values: ESPEasy replaces %eventvalue% even when
+    # the event carries no value (with the default "0").
+    text = resolve_event_values(text, event_values)
+
     def _replace_var(m: re.Match) -> str:
         return resolve_system_var(m.group(1))
 

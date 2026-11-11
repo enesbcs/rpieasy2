@@ -52,6 +52,14 @@ class C006PiDomeMQTT(ControllerBase):
             logger.info("MQTT controller disabled, not starting client loop")
         return True
 
+    async def _fire_mqtt_event(self, name: str) -> None:
+        try:
+            engine = get_rules_engine()
+            if engine and engine.is_enabled():
+                await engine.fire_event(name)
+        except Exception:
+            logger.exception("Failed to fire %s rule event", name)
+
     async def _run_client_loop(self) -> None:
         backoff = 1
         while True:
@@ -78,8 +86,10 @@ class C006PiDomeMQTT(ControllerBase):
                     kwargs["tls_params"] = aiomqtt.TLSParameters()
 
                 logger.info("Connecting to PiDome MQTT %s:%s", host, port)
+                connected = False
                 async with aiomqtt.Client(**kwargs) as client:
                     self._client = client
+                    connected = True
                     backoff = 1
 
                     for topic in self._pending_subscriptions:
@@ -89,10 +99,13 @@ class C006PiDomeMQTT(ControllerBase):
                         except Exception as e:
                             logger.error("PiDome MQTT subscribe failed for %s: %s", topic, e)
 
+                    await self._fire_mqtt_event("MQTT#Connected")
                     await self._listen()
             except Exception as e:
                 logger.error("PiDome MQTT connection error: %s", e)
             finally:
+                if connected:
+                    await self._fire_mqtt_event("MQTT#Disconnected")
                 self._client = None
 
             await asyncio.sleep(min(backoff, 30))

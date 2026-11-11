@@ -97,6 +97,14 @@ class C002DomoticzMQTT(ControllerBase):
             logger.info("MQTT controller disabled, not starting client loop")
         return True
 
+    async def _fire_mqtt_event(self, name: str) -> None:
+        try:
+            engine = get_rules_engine()
+            if engine and engine.is_enabled():
+                await engine.fire_event(name)
+        except Exception:
+            logger.exception("Failed to fire %s rule event", name)
+
     async def _run_client_loop(self) -> None:
         backoff = 1
         while True:
@@ -131,6 +139,7 @@ class C002DomoticzMQTT(ControllerBase):
                     pass
             else:
                 self._cmd_sub_topic = None
+            connected = False
             try:
                 host = config.get("controllerip", config.get("host", "127.0.0.1")) or "127.0.0.1"
                 host = host.strip()
@@ -182,6 +191,9 @@ class C002DomoticzMQTT(ControllerBase):
                     except Exception:
                         pass
 
+                    connected = True
+                    await self._fire_mqtt_event("MQTT#Connected")
+
                     await self._listen()
             except Exception as e:
                 logger.error("Domoticz MQTT connection error: %s", e)
@@ -191,6 +203,8 @@ class C002DomoticzMQTT(ControllerBase):
                 except Exception:
                     pass
             finally:
+                if connected:
+                    await self._fire_mqtt_event("MQTT#Disconnected")
                 try:
                     if idx is not None:
                         webserver_mod.set_controller_runtime_state(idx, {"connected": False})

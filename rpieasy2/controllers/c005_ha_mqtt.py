@@ -266,6 +266,14 @@ class C005HomeAssistantMQTT(ControllerBase):
         except Exception:
             logger.exception("Error during state topic map cleanup")
 
+    async def _fire_mqtt_event(self, name: str) -> None:
+        try:
+            engine = get_rules_engine()
+            if engine and engine.is_enabled():
+                await engine.fire_event(name)
+        except Exception:
+            logger.exception("Failed to fire %s rule event", name)
+
     async def _run_client_loop(self) -> None:
         backoff = 1
         while True:
@@ -329,9 +337,11 @@ class C005HomeAssistantMQTT(ControllerBase):
 
                 logger.info("Connecting to MQTT %s:%s", host, port)
                 # aiomqtt.Client is used as an async context manager
+                mqtt_connected = False
                 try:
                     async with aiomqtt.Client(hostname=host, port=port, username=user, password=password, will=will) as client:
                         self._client = client
+                        mqtt_connected = True
 
                         # subscribe discovery control topics
                         try:
@@ -356,6 +366,8 @@ class C005HomeAssistantMQTT(ControllerBase):
                         except Exception:
                             logger.exception("Failed to publish availability after connect")
 
+                        await self._fire_mqtt_event("MQTT#Connected")
+
                         # reset backoff after successful connect
                         backoff = 20
 
@@ -370,6 +382,8 @@ class C005HomeAssistantMQTT(ControllerBase):
                 finally:
                     # ensure self._client is cleared when context exits
                     # clear client and mark disconnected
+                    if mqtt_connected:
+                        await self._fire_mqtt_event("MQTT#Disconnected")
                     try:
                         idx = getattr(self, "_controller_index", None)
                         if idx is not None:

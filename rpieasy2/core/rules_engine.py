@@ -9,7 +9,15 @@ from typing import Any
 
 from rpieasy2.core.events import Event, get_event_bus
 from rpieasy2.core.rpiconst import SENSOR_TYPE_TO_VALUE_COUNT
-from rpieasy2.core.system_vars import LIVE_TASK_VALUES, resolve_system_var, resolve_taskval, VAR_PATTERN, TASKVAL_PATTERN
+from rpieasy2.core.system_vars import (
+    LIVE_TASK_VALUES,
+    TASKVAL_PATTERN,
+    VAR_PATTERN,
+    resolve_event_value,
+    resolve_event_values,
+    resolve_system_var,
+    resolve_taskval,
+)
 
 logger = logging.getLogger("rpieasy2.rules")
 
@@ -20,9 +28,110 @@ class RuleParseError(Exception):
     pass
 
 
+def strip_rule_comment(line: str) -> str:
+    """Strip a trailing ``//`` comment, ESPEasy style.
+
+    Quoted text and URL-style ``://`` sequences are left untouched.  The
+    returned line is trimmed.
+    """
+    if "//" not in line:
+        return line.strip()
+
+    in_quote = ""
+    have_colon = False
+    first_slash = False
+
+    for i, ch in enumerate(line):
+        if ch == ":":
+            have_colon = True
+            first_slash = False
+        elif ch == "/":
+            if not in_quote and not have_colon:
+                if first_slash:
+                    return line[:i - 1].strip()
+                first_slash = True
+            else:
+                first_slash = False
+                have_colon = False
+        elif ch in ('"', "'", "`"):
+            if not in_quote and (
+                i == 0 or line[i - 1] in (" ", ",", "{", "[", ":", "=")
+            ):
+                in_quote = ch
+            elif ch == in_quote and (
+                i == len(line) - 1
+                or line[i + 1] in (" ", ",", "/", "}", "]", ":", "=")
+            ):
+                in_quote = ""
+            first_slash = False
+            have_colon = False
+        else:
+            first_slash = False
+            have_colon = False
+
+    return line.strip()
+
+
+def _strip_wrapping_quotes(token: str) -> str:
+    if len(token) >= 2 and token[0] == token[-1] and token[0] in ('"', "'", "`"):
+        return token[1:-1]
+    return token
+
+
+def _split_args(text: str, separator: str | None) -> list[str]:
+    """Split command arguments while respecting quotes and braces.
+
+    ``separator`` is either a single character (usually ``","``) or ``None``
+    for whitespace splitting.  Commas inside JSON objects/arrays, nested
+    parentheses and quoted strings never split an argument.
+    """
+    args: list[str] = []
+    current: list[str] = []
+    quote = ""
+    depth = 0
+
+    for ch in text:
+        if quote:
+            current.append(ch)
+            if ch == quote:
+                quote = ""
+            continue
+        if ch in ('"', "'", "`"):
+            quote = ch
+            current.append(ch)
+            continue
+        if ch in "{[(":
+            depth += 1
+            current.append(ch)
+            continue
+        if ch in "}])":
+            depth = max(0, depth - 1)
+            current.append(ch)
+            continue
+        if depth == 0:
+            if separator == "," and ch == ",":
+                token = _strip_wrapping_quotes("".join(current).strip())
+                if token:
+                    args.append(token)
+                current = []
+                continue
+            if separator is None and ch.isspace():
+                token = _strip_wrapping_quotes("".join(current).strip())
+                if token:
+                    args.append(token)
+                current = []
+                continue
+        current.append(ch)
+
+    token = _strip_wrapping_quotes("".join(current).strip())
+    if token:
+        args.append(token)
+    return args
+
+
 class RuleCommand:
     def __init__(self, raw: str):
-        self.raw = raw.strip()
+        self.raw = strip_rule_comment(raw)
         self.name = ""
         self.args: list[str] = []
         self._parse()
@@ -31,95 +140,255 @@ class RuleCommand:
         if not self.raw:
             return
         text = self.raw
-        if " " in text and "," in text:
-            fsp = text.find(" ")
-            fco = text.find(",")
-            if fsp < fco:
-                self.name = text[:fsp].strip().lower()
-                rest = text[fsp + 1 :].strip()
-                self.args = [p.strip() for p in self._split_args(rest)]
-                return
-        parts = self._split_args(text)
-        if parts:
-            self.name = parts[0].strip().lower()
-            self.args = [p.strip() for p in parts[1:]]
 
-    @staticmethod
-    def _split_args(text: str) -> list[str]:
-        args: list[str] = []
-        current: list[str] = []
-        in_quote = False
-        quote_char = ""
-        for ch in text:
-            if in_quote:
-                if ch == quote_char:
-                    in_quote = False
-                else:
-                    current.append(ch)
-            elif ch in ('"', "'"):
-                in_quote = True
-                quote_char = ch
-            elif ch == ",":
-                args.append("".join(current).strip())
-                current = []
-            else:
-                current.append(ch)
-        if current:
-            args.append("".join(current).strip())
-        return args
+        # Command name is the first whitespace- or comma-separated token.
+        sep_pos = -1
+        for i, ch in enumerate(text):
+            if ch.isspace() or ch == ",":
+                sep_pos = i
+                break
+        if sep_pos < 0:
+            self.name = text.strip().lower()
+            return
+
+        self.name = text[:sep_pos].strip().lower()
+        rest = text[sep_pos + 1:].strip()
+        if not rest:
+            return
+
+        # ESPEasy commands use comma-separated arguments.  When no comma is
+        # present, fall back to whitespace splitting (event, sendTo, ...).
+        if "," in rest:
+            self.args = _split_args(rest, ",")
+        else:
+            self.args = _split_args(rest, None)
+
+
+
+def _split_condition_chain(text: str) -> list[str]:
+    """Split a condition into operands and top-level AND/OR operators.
+
+    ESPEasy evaluates mixed ``and``/``or`` strictly left to right, so the
+    returned list alternates operand, operator, operand, ...  Parentheses and
+    quoted strings are kept intact.
+    """
+    parts: list[str] = []
+    start = 0
+    depth = 0
+    quote = ""
+    i = 0
+    while i < len(text):
+        ch = text[i]
+        if quote:
+            if ch == quote:
+                quote = ""
+            i += 1
+            continue
+        if ch in ('"', "'", "`"):
+            quote = ch
+            i += 1
+            continue
+        if ch in "([{":
+            depth += 1
+            i += 1
+            continue
+        if ch in ")]}":
+            depth = max(0, depth - 1)
+            i += 1
+            continue
+        if depth == 0:
+            if text.startswith("&&", i):
+                parts.append(text[start:i].strip())
+                parts.append("and")
+                i += 2
+                start = i
+                continue
+            if text.startswith("||", i):
+                parts.append(text[start:i].strip())
+                parts.append("or")
+                i += 2
+                start = i
+                continue
+            matched = False
+            for word in ("and", "or"):
+                if text[i:i + len(word)].lower() == word:
+                    before = text[i - 1] if i > 0 else " "
+                    after = text[i + len(word)] if i + len(word) < len(text) else " "
+                    if not (before.isalnum() or before == "_") and not (
+                        after.isalnum() or after == "_"
+                    ):
+                        parts.append(text[start:i].strip())
+                        parts.append(word)
+                        i += len(word)
+                        start = i
+                        matched = True
+                        break
+            if matched:
+                continue
+        i += 1
+    parts.append(text[start:].strip())
+    return [p for p in parts if p]
+
+
+def _strip_outer_condition_parens(text: str) -> str:
+    text = text.strip()
+    if not text.startswith("("):
+        return text
+    depth = 0
+    quote = ""
+    for i, ch in enumerate(text):
+        if quote:
+            if ch == quote:
+                quote = ""
+            continue
+        if ch in ('"', "'", "`"):
+            quote = ch
+            continue
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+            if depth == 0:
+                if i == len(text) - 1:
+                    return text[1:-1].strip()
+                return text
+    return text
+
+
+_COMPARE_OPERATORS = (">=", "<=", "!=", "<>", "==", "=", "<", ">")
+
+
+def _find_comparison_operator(text: str) -> tuple[str, int, int]:
+    """Find the first comparison operator outside [task#value] references."""
+    depth = 0
+    quote = ""
+    i = 0
+    while i < len(text):
+        ch = text[i]
+        if quote:
+            if ch == quote:
+                quote = ""
+            i += 1
+            continue
+        if ch in ('"', "'", "`"):
+            quote = ch
+            i += 1
+            continue
+        if ch == "[":
+            depth += 1
+            i += 1
+            continue
+        if ch == "]":
+            depth = max(0, depth - 1)
+            i += 1
+            continue
+        if depth == 0:
+            for op in _COMPARE_OPERATORS:
+                if text.startswith(op, i):
+                    return op, i, len(op)
+        i += 1
+    return "", -1, 0
+
+
+def _to_number(value: str) -> float | None:
+    try:
+        return float(str(value).strip())
+    except (ValueError, TypeError):
+        return None
+
+
+def _compare_values(left: Any, operator: str, right: Any) -> bool:
+    lf = _to_number(left)
+    rf = _to_number(right)
+    if lf is not None and rf is not None:
+        if operator in ("=", "=="):
+            return lf == rf
+        if operator in ("!=", "<>"):
+            return lf != rf
+        if operator == ">=":
+            return lf >= rf
+        if operator == "<=":
+            return lf <= rf
+        if operator == ">":
+            return lf > rf
+        if operator == "<":
+            return lf < rf
+
+    ls = str(left).strip()
+    rs = str(right).strip()
+    if operator in ("=", "=="):
+        return ls == rs
+    if operator in ("!=", "<>"):
+        return ls != rs
+    if operator == ">=":
+        return ls >= rs
+    if operator == "<=":
+        return ls <= rs
+    if operator == ">":
+        return ls > rs
+    if operator == "<":
+        return ls < rs
+    return False
 
 
 class Condition:
     def __init__(self, raw: str):
         self.raw = raw.strip()
-        self.left: str = ""
-        self.operator: str = ""
-        self.right: str = ""
-        self._parse()
-
-    def _parse(self) -> None:
-        op_pattern = re.compile(r"(>=|<=|!=|==|=|<|>)")
-        m = op_pattern.search(self.raw)
-        if m:
-            self.operator = m.group(1)
-            self.left = self.raw[:m.start()].strip()
-            self.right = self.raw[m.end():].strip()
-            if self.operator == "=":
-                self.operator = "=="
 
     def evaluate(self, context: dict[str, Any]) -> bool:
-        if not self.operator:
-            return False
-        left_val = self._resolve(self.left, context)
-        right_val = self._resolve(self.right, context)
-        logger.debug("Condition.evaluate: %s %s %s -> left=%s right=%s",
-                     self.left, self.operator, self.right, left_val, right_val)
         try:
-            lf = float(left_val)
-            rf = float(right_val)
-            if self.operator == ">=":
-                return lf >= rf
-            if self.operator == "<=":
-                return lf <= rf
-            if self.operator == "!=":
-                return lf != rf
-            if self.operator == "==":
-                return lf == rf
-            if self.operator == ">":
-                return lf > rf
-            if self.operator == "<":
-                return lf < rf
-        except (ValueError, TypeError):
-            pass
-        if self.operator == "==":
-            return str(left_val) == str(right_val)
-        if self.operator == "!=":
-            return str(left_val) != str(right_val)
-        return False
+            return self._evaluate(self.raw, context)
+        except Exception as exc:
+            logger.debug("Condition.evaluate failed for %r: %s", self.raw, exc)
+            return False
+
+    def _evaluate(self, text: str, context: dict[str, Any]) -> bool:
+        text = _strip_outer_condition_parens(text)
+        if not text:
+            return False
+
+        parts = _split_condition_chain(text)
+        if not parts:
+            return False
+        if len(parts) == 1:
+            return self._evaluate_comparison(parts[0], context)
+
+        # ESPEasy has no and/or precedence: evaluate strictly left to right.
+        result = self._evaluate(parts[0], context)
+        idx = 1
+        while idx + 1 < len(parts):
+            operator = parts[idx]
+            right = self._evaluate(parts[idx + 1], context)
+            if operator == "and":
+                result = result and right
+            else:
+                result = result or right
+            idx += 2
+        return result
+
+    def _evaluate_comparison(self, text: str, context: dict[str, Any]) -> bool:
+        operator, pos, op_len = _find_comparison_operator(text)
+        if not operator:
+            value = self._resolve(text, context)
+            number = _to_number(value)
+            if number is not None:
+                return number != 0
+            return value.strip().lower() not in ("", "0", "false", "off", "no")
+
+        left = self._resolve(text[:pos], context)
+        right = self._resolve(text[pos + op_len:], context)
+        logger.debug(
+            "Condition.evaluate: %s %s %s -> left=%s right=%s",
+            text[:pos].strip(), operator, text[pos + op_len:].strip(), left, right,
+        )
+        return _compare_values(left, operator, right)
 
     @staticmethod
     def _resolve(val: str, context: dict[str, Any]) -> str:
         val = val.strip()
+        if len(val) >= 2 and val[0] == val[-1] and val[0] in ('"', "'", "`"):
+            return val[1:-1]
+
         if val.startswith("[") and val.endswith("]"):
             inner = val[1:-1]
             if "#" in inner:
@@ -131,18 +400,105 @@ class Condition:
                     if tname.lower() == task:
                         for vn, vv in values.items():
                             if vn.lower() == vname:
-                                result = str(vv)
-                                logger.debug("_resolve: [%s#%s] -> %s (from tv=%s)", task, vname, result, tv)
-                                return result
-                logger.debug("_resolve: [%s#%s] NOT FOUND in task_values=%s", task, vname, tv)
+                                return str(vv)
             return "0"
+
         if val.startswith("%") and val.endswith("%"):
-            var = val[1:-1].lower()
-            return str(context.get("vars", {}).get(var, "0"))
+            name = val[1:-1]
+            event_val = resolve_event_value(name, context.get("event_values"))
+            if event_val is not None:
+                return event_val
+            variables = context.get("vars", {})
+            lowered = name.lower()
+            for key, value in variables.items():
+                if key.lower() == lowered:
+                    return str(value)
+            return str(resolve_system_var(name))
+
         if val.startswith("$"):
-            svar = val[1:]
-            return str(context.get("str_vars", {}).get(svar, ""))
+            name = val[1:].lower()
+            for key, value in context.get("str_vars", {}).items():
+                if key.lower() == name:
+                    return str(value)
+            return ""
+
         return val
+
+
+
+def _split_event_value(event: str) -> tuple[str, str | None]:
+    base, sep, value = event.partition("=")
+    if not sep:
+        return event.strip(), None
+    return base.strip(), value.strip()
+
+
+def _parse_clock_target(text: str, default_day: str | None) -> tuple[str | None, str]:
+    parts = [part.strip() for part in text.split(",")]
+    if len(parts) >= 2:
+        return parts[0], parts[1]
+    return default_day, parts[0] if parts else ""
+
+
+def _match_clock_component(event_part: str, rule_part: str) -> bool:
+    if rule_part == "*":
+        return True
+    if "*" in rule_part:
+        event_part = event_part.zfill(len(rule_part))
+        rule_part = rule_part.zfill(len(event_part))
+        if len(event_part) != len(rule_part):
+            return False
+        return all(r == "*" or r == e for r, e in zip(rule_part, event_part))
+    try:
+        return int(event_part) == int(rule_part)
+    except (ValueError, TypeError):
+        return event_part == rule_part
+
+
+def _match_clock_time(event_time: str, rule_time: str) -> bool:
+    rule_time = rule_time.strip()
+    event_time = event_time.strip()
+    if rule_time == "*":
+        return True
+    if ":" not in rule_time:
+        return event_time == rule_time
+    if ":" not in event_time:
+        return False
+
+    rule_h, rule_m = rule_time.split(":", 1)
+    event_h, event_m = event_time.split(":", 1)
+    if not _match_clock_component(event_h, rule_h):
+        return False
+    return _match_clock_component(event_m, rule_m)
+
+
+def _match_clock_event(event: str, rule: str) -> bool:
+    if "=" not in event or "=" not in rule:
+        return False
+    event_target = event.split("=", 1)[1].strip()
+    rule_target = rule.split("=", 1)[1].strip()
+
+    event_day, event_time = _parse_clock_target(event_target, None)
+    rule_day, rule_time = _parse_clock_target(rule_target, "*")
+
+    if rule_day and rule_day.lower() not in ("*", "all"):
+        day = rule_day.lower()
+        if day in ("wrk", "workdays"):
+            if time.localtime().tm_wday > 4:
+                return False
+        elif day in ("wkd", "weekend", "weekends"):
+            if time.localtime().tm_wday < 5:
+                return False
+        elif event_day:
+            event_day_l = event_day.lower()
+            if not (
+                event_day_l == day
+                or event_day_l.startswith(day)
+                or day.startswith(event_day_l)
+            ):
+                return False
+
+    return _match_clock_time(event_time, rule_time)
 
 
 class RuleBlock:
@@ -150,35 +506,68 @@ class RuleBlock:
         self.trigger = trigger.strip()
         self.if_blocks: list[IfBlock] = []
 
-    def matches(self, event_type: str, event_data: dict[str, Any]) -> bool:
-        trig = self.trigger.lower()
-        if trig == event_type.lower():
-            return True
-        if "#" in trig:
-            parts = trig.split("#", 1)
-            trig_task = parts[0].lower()
-            trig_val = parts[1].lower()
-            expected_val: str | None = None
-            if "=" in trig_val:
-                vparts = trig_val.split("=", 1)
-                trig_val = vparts[0].strip()
-                expected_val = vparts[1].strip()
-            for tname, values in event_data.get("task_values", {}).items():
-                if tname.lower() == trig_task:
-                    for vn, vv in values.items():
-                        if vn.lower() == trig_val:
-                            if expected_val is None:
-                                return True
-                            return str(vv) == expected_val
-        if trig.startswith("clock#time="):
+    def matches(
+        self,
+        event_type: str,
+        event_data: dict[str, Any],
+        resolver: Any = None,
+    ) -> bool:
+        event = event_type.strip()
+        rule = self.trigger.strip()
+        if resolver is not None:
             try:
-                expected = trig.split("=", 1)[1].strip()
-                now = time.strftime("%H:%M")
-                if now == expected:
-                    return True
+                rule = resolver(rule, event_data)
             except Exception:
                 pass
-        return False
+
+        if rule == "*":
+            return True
+        if not rule:
+            return False
+
+        # ESPEasy canonical timer event is "Rules#Timer=N"; accept the old
+        # "Timer#N" spelling as an alias.
+        lowered_rule = rule.lower()
+        if lowered_rule.startswith("timer#") and "=" not in rule:
+            rule = "Rules#Timer=" + rule.split("#", 1)[1].strip()
+
+        if event.lower().startswith("clock#time") or lowered_rule.startswith("clock#time"):
+            return _match_clock_event(event, rule)
+
+        lowered_event = event.lower()
+        if lowered_event.startswith("timer#") and "=" not in event:
+            event = "Rules#Timer=" + event.split("#", 1)[1].strip()
+
+        # Literal string events ("!...") are prefix-matched unless the rule
+        # contains a '#'.
+        if event.startswith("!"):
+            if "#" not in rule:
+                return event[:len(rule)].lower() == rule.lower()
+            return event.lower() == rule.lower()
+
+        event_base, event_value = _split_event_value(event)
+        operator, pos, op_len = _find_comparison_operator(rule)
+
+        if operator:
+            rule_base = rule[:pos].strip()
+            rule_value = rule[pos + op_len:].strip()
+        else:
+            rule_base = rule
+            rule_value = None
+
+        if "*" in rule_base:
+            prefix = rule_base.split("*", 1)[0]
+            if not event_base.lower().startswith(prefix.lower()):
+                return False
+        elif event_base.lower() != rule_base.lower():
+            return False
+
+        if operator:
+            if event_value is None:
+                return False
+            return _compare_values(event_value, operator, rule_value)
+        return True
+
 
 
 class IfBlock:
@@ -290,6 +679,7 @@ class RulesEngine:
         self._running = False
         self._task_enabled: dict[int, bool] = {}
         self._runat_tasks: dict[str, asyncio.Task] = {}
+        self._last_clock_minute: str | None = None
 
     def set_plugin_info(self, info: dict[int, Any]) -> None:
         self._plugin_info = info
@@ -311,18 +701,29 @@ class RulesEngine:
     def update_task_value(self, task_index: int, values: dict[str, str]) -> None:
         self._task_values[task_index] = values
 
-    def _resolve_system_var(self, name: str) -> str:
+    def _resolve_system_var(self, name: str, context: dict[str, Any] | None = None) -> str:
+        if context is not None:
+            event_val = resolve_event_value(name, context.get("event_values"))
+            if event_val is not None:
+                return event_val
         result = resolve_system_var(name)
         if result:
             return result
         n = name.lower()
         if n in self._vars:
             return str(self._vars[n])
+        for key, value in self._vars.items():
+            if key.lower() == n:
+                return str(value)
         return ""
 
-    def _resolve_template(self, text: str) -> str:
+    def _resolve_template(self, text: str, context: dict[str, Any] | None = None) -> str:
+        if context is not None:
+            text = resolve_event_values(text, context.get("event_values"))
+
         def _replace_var(m: re.Match) -> str:
-            return self._resolve_system_var(m.group(1))
+            return self._resolve_system_var(m.group(1), context)
+
         result = VAR_PATTERN.sub(_replace_var, text)
         result = resolve_taskval(result, self._task_values, self._task_names)
         return result
@@ -339,81 +740,104 @@ class RulesEngine:
         lines = text.split("\n")
         i = 0
         while i < len(lines):
-            line = lines[i].strip()
+            line = strip_rule_comment(lines[i])
             i += 1
-            if not line or line.startswith("//"):
+            if not line:
                 continue
-            if line.lower().startswith("on ") and line.lower().endswith(" do"):
-                trigger = line[3:-3].strip()
-                block = RuleBlock(trigger)
+            low = line.lower()
+            if not low.startswith("on "):
+                continue
+            pos_do = low.find(" do", 3)
+            if pos_do == -1:
+                continue
+
+            trigger = line[3:pos_do].strip()
+            action = line[pos_do + 3:].strip()
+            block = RuleBlock(trigger)
+
+            if action:
+                one_liner = action.lower().endswith("endon")
+                if one_liner:
+                    action = action[:-5].strip()
+                if action:
+                    ifb = IfBlock()
+                    ifb.commands = [RuleCommand(action)]
+                    block.if_blocks.append(ifb)
+                if one_liner:
+                    rule_set.rules.append(block)
+                    continue
+                # Inline command followed by a normal block: keep it first.
+                i = self._parse_block(lines, i, block)
+                rule_set.rules.append(block)
+            else:
                 i = self._parse_block(lines, i, block)
                 rule_set.rules.append(block)
 
     def _parse_block(self, lines: list[str], start: int, block: RuleBlock) -> int:
         i = start
         current_if: IfBlock | None = None
-        in_else = False
-        top_cmds: list[RuleCommand] = []
+        current_root: IfBlock | None = None
+        top_if: IfBlock | None = None
         while i < len(lines):
-            line = lines[i].strip()
+            line = strip_rule_comment(lines[i])
             i += 1
-            if not line or line.startswith("//"):
+            if not line:
                 continue
-            if line.lower() == "endon":
-                if top_cmds:
-                    ifb = IfBlock()
-                    ifb.commands = top_cmds
-                    block.if_blocks.insert(0, ifb)
+            low = line.lower()
+            if low == "endon":
                 return i
-            if line.lower().startswith("if "):
-                in_else = False
+            if low.startswith("if "):
+                top_if = None
                 cond_text = line[3:].strip()
                 ifb = IfBlock()
                 ifb.condition = Condition(cond_text)
                 block.if_blocks.append(ifb)
+                current_root = ifb
                 current_if = ifb
                 i = self._parse_commands(lines, i, current_if.commands)
-            elif line.lower().startswith("elseif "):
-                in_else = False
-                if current_if is not None and block.if_blocks:
+            elif low.startswith("elseif "):
+                if current_root is not None:
                     cond_text = line[7:].strip()
                     elifb = IfBlock()
                     elifb.condition = Condition(cond_text)
-                    block.if_blocks[-1].elseif_blocks.append(elifb)
+                    current_root.elseif_blocks.append(elifb)
                     current_if = elifb
                     i = self._parse_commands(lines, i, current_if.commands)
-            elif line.lower() == "else":
-                in_else = True
-                if block.if_blocks:
+            elif low == "else" or low.startswith("else "):
+                if current_root is not None:
                     elb = IfBlock()
-                    block.if_blocks[-1].else_block = elb
+                    current_root.else_block = elb
                     current_if = elb
                     i = self._parse_commands(lines, i, current_if.commands)
-            elif line.lower() == "endif":
-                in_else = False
+            elif low == "endif":
                 current_if = None
+                current_root = None
+                top_if = None
             elif current_if is not None:
                 current_if.commands.append(RuleCommand(line))
             else:
-                top_cmds.append(RuleCommand(line))
-        if top_cmds:
-            ifb = IfBlock()
-            ifb.commands = top_cmds
-            block.if_blocks.insert(0, ifb)
+                # ESPEasy executes commands in source order, so top-level
+                # commands must stay interleaved with the if blocks.  Merge
+                # consecutive top-level commands into a single unconditional
+                # block at the current position.
+                if top_if is None:
+                    top_if = IfBlock()
+                    block.if_blocks.append(top_if)
+                top_if.commands.append(RuleCommand(line))
         return i
 
     def _parse_commands(self, lines: list[str], start: int, cmd_list: list[RuleCommand]) -> int:
         i = start
         while i < len(lines):
-            line = lines[i].strip()
+            line = strip_rule_comment(lines[i])
             i += 1
-            if not line or line.startswith("//"):
+            if not line:
                 continue
             low = line.lower()
             if low.startswith("if ") or low.startswith("elseif "):
                 i -= 1
                 return i
-            if low in ("endif", "else", "endon"):
+            if low == "endif" or low == "else" or low.startswith("else ") or low == "endon":
                 i -= 1
                 return i
             cmd_list.append(RuleCommand(line))
@@ -422,29 +846,43 @@ class RulesEngine:
     async def fire_event(self, event_type: str, data: dict[str, Any] | None = None) -> None:
         if not self._enabled:
             return
+        event_type = event_type.strip()
         ctx: dict[str, Any] = {
             "task_values": {},
             "vars": self._vars,
             "str_vars": self._str_vars,
+            "event": event_type,
         }
         for ti, vd in self._task_values.items():
             tname = self._task_names.get(ti, f"Task{ti}")
             ctx["task_values"][tname] = vd
+
+        event_name, event_value = _split_event_value(event_type)
+        ctx["event_name"] = event_name
+        if event_value is not None:
+            ctx["event_value"] = event_value
+            ctx["event_values"] = [
+                part.strip() for part in event_value.split(",") if part.strip() != ""
+            ]
+
         if data:
-            ctx.update(data)
+            for key, value in data.items():
+                if key == "task_values" and isinstance(value, dict):
+                    ctx["task_values"].update(value)
+                else:
+                    ctx[key] = value
 
         logger.debug("fire_event: type=%s task_values=%s", event_type, ctx.get("task_values", {}))
 
         for rs in self._rule_sets:
             for block in rs.rules:
-                if block.matches(event_type, ctx):
+                if block.matches(event_type, ctx, self._resolve_template):
                     await self._execute_block(block, ctx)
 
     async def _execute_block(self, block: RuleBlock, context: dict[str, Any]) -> None:
+        # ESPEasy evaluates every top-level if block in the matching rule.
         for ifb in block.if_blocks:
-            executed = await self._execute_if(ifb, context)
-            if executed:
-                break
+            await self._execute_if(ifb, context)
 
     async def _execute_if(self, ifb: IfBlock, context: dict[str, Any]) -> bool:
         if ifb.condition is not None and not ifb.condition.evaluate(context):
@@ -482,31 +920,58 @@ class RulesEngine:
 
     async def _execute_command(self, cmd: RuleCommand, context: dict[str, Any]) -> None:
         name = cmd.name
-        args = [self._resolve_template(a) for a in cmd.args]
+        args = [self._resolve_template(a, context) for a in cmd.args]
 
         if name == "event":
             if args:
                 ev_name = args[0]
+                event_values = args[1:]
+                if event_values:
+                    if "=" in ev_name:
+                        full_event = ev_name + "," + ",".join(event_values)
+                    else:
+                        full_event = ev_name + "=" + ",".join(event_values)
+                else:
+                    full_event = ev_name
                 ev_data: dict[str, Any] = {}
-                if len(args) > 1:
-                    ev_data["values"] = args[1:]
+                if event_values:
+                    ev_data["values"] = event_values
+                    ev_data["event_values"] = event_values
                 await self._event_bus.publish(Event(
                     type="PLUGIN_WRITE", string1=ev_name, data=ev_data))
-                await self.fire_event(ev_name)
+                if "=" in full_event:
+                    values = full_event.split("=", 1)[1].split(",")
+                else:
+                    values = []
+                await self.fire_event(full_event, {"event_values": values} if values else None)
 
         elif name == "asyncevent":
             if args:
                 ev_name = args[0]
+                event_values = args[1:]
+                if event_values:
+                    if "=" in ev_name:
+                        full_event = ev_name + "," + ",".join(event_values)
+                    else:
+                        full_event = ev_name + "=" + ",".join(event_values)
+                else:
+                    full_event = ev_name
                 ev_data: dict[str, Any] = {}
-                if len(args) > 1:
-                    ev_data["values"] = args[1:]
-                asyncio.ensure_future(self.fire_event(ev_name))
+                if event_values:
+                    ev_data["values"] = event_values
+                    ev_data["event_values"] = event_values
+                if "=" in full_event:
+                    values = full_event.split("=", 1)[1].split(",")
+                else:
+                    values = []
+                asyncio.ensure_future(self.fire_event(
+                    full_event, {"event_values": values} if values else None))
 
         elif name in ("taskvalueset", "taskvaluesetandrun"):
             if len(args) >= 3:
                 task_ident = args[0]
                 val_nr = int(args[1]) - 1
-                value = args[2]
+                value = self._eval_value(args[2])
                 target_ti: int | None = None
                 try:
                     target_ti = int(task_ident) - 1
@@ -762,7 +1227,7 @@ class RulesEngine:
 
         elif name == "let":
             if len(args) >= 2:
-                var_name = args[0]
+                var_name = args[0].lower()
                 try:
                     val = ESPEASY_RULES_FLOAT_TYPE(args[1])
                     self._vars[var_name] = val
@@ -775,10 +1240,10 @@ class RulesEngine:
 
         elif name == "letstr":
             if len(args) >= 2:
-                self._str_vars[args[0]] = args[1]
+                self._str_vars[args[0].lower()] = args[1]
 
         elif name == "inc":
-            var_name = args[0] if args else ""
+            var_name = args[0].lower() if args else ""
             amount = 1.0
             if len(args) >= 2:
                 try:
@@ -788,10 +1253,10 @@ class RulesEngine:
                         amount = self._calculate(args[1])
                     except Exception:
                         amount = 1.0
-            self._vars[var_name] = self._vars.get(var_name, 0) + amount
+            self._vars[var_name] = self._get_var(var_name, 0.0) + amount
 
         elif name == "dec":
-            var_name = args[0] if args else ""
+            var_name = args[0].lower() if args else ""
             amount = 1.0
             if len(args) >= 2:
                 try:
@@ -801,7 +1266,7 @@ class RulesEngine:
                         amount = self._calculate(args[1])
                     except Exception:
                         amount = 1.0
-            self._vars[var_name] = self._vars.get(var_name, 0) - amount
+            self._vars[var_name] = self._get_var(var_name, 0.0) - amount
 
         elif name == "logentry":
             msg = ", ".join(args) if args else ""
@@ -1044,7 +1509,8 @@ class RulesEngine:
                 else:
                     self._loop_timers[timer_nr] = interval
                     self._timers[timer_nr] = time.time()
-                    asyncio.ensure_future(self.fire_event(f"Timer#{timer_nr}"))
+                    asyncio.ensure_future(self.fire_event(
+                        f"Rules#Timer={timer_nr}", {"event_values": [str(timer_nr)]}))
 
         elif name == "looptimersetandrun_ms":
             if len(args) >= 2:
@@ -1057,7 +1523,8 @@ class RulesEngine:
                     interval_sec = interval_ms / 1000.0
                     self._loop_timers[timer_nr] = interval_sec
                     self._timers[timer_nr] = time.time()
-                    asyncio.ensure_future(self.fire_event(f"Timer#{timer_nr}"))
+                    asyncio.ensure_future(self.fire_event(
+                        f"Rules#Timer={timer_nr}", {"event_values": [str(timer_nr)]}))
 
         elif name == "timerpause":
             if args:
@@ -1092,7 +1559,7 @@ class RulesEngine:
             if len(args) >= 3:
                 host = args[0]
                 port = int(args[1])
-                message = args[2]
+                message = ",".join(args[2:])
                 ev = Event(type="CONTROLLER_SEND_UDP", data={
                     "host": host, "port": port, "message": message,
                 })
@@ -1122,7 +1589,7 @@ class RulesEngine:
         elif name == "publish":
             if len(args) >= 2:
                 topic = args[0]
-                message = args[1]
+                message = ",".join(args[1:])
                 ev = Event(type="CONTROLLER_SEND", data={
                     "send_to_mqtt": True, "topic": topic, "message": message,
                 })
@@ -1131,7 +1598,7 @@ class RulesEngine:
         elif name == "publishr":
             if len(args) >= 2:
                 topic = args[0]
-                message = args[1]
+                message = ",".join(args[1:])
                 ev = Event(type="CONTROLLER_SEND", data={
                     "send_to_mqtt": True, "topic": topic, "message": message, "retain": True,
                 })
@@ -1161,8 +1628,13 @@ class RulesEngine:
                     if angle >= 9000:
                         self._hw.gpio.servo_detach(pin)
                     else:
+                        # ESPEasy takes an angle in 0..180 degrees, while the
+                        # GPIO backends expect a pulse width in microseconds.
+                        # Match the Arduino Servo defaults (544..2400 us).
+                        angle = max(0, min(180, angle))
+                        pulse_width = int(round(544 + (angle / 180.0) * (2400 - 544)))
                         self._hw.gpio.claim_output(pin)
-                        self._hw.gpio.servo(pin, angle)
+                        self._hw.gpio.servo(pin, pulse_width)
                 except Exception as e:
                     logger.error(f"Servo failed: {e}")
 
@@ -1416,6 +1888,42 @@ class RulesEngine:
             logger.warning(f"Unknown command: {name}")
             raise ValueError(f"Unknown command: {name}")
 
+    def _get_var(self, name: str, default: float = 0.0) -> float:
+        lowered = name.lower()
+        if lowered in self._vars:
+            return self._vars[lowered]
+        for key, value in self._vars.items():
+            if key.lower() == lowered:
+                return value
+        return default
+
+    @staticmethod
+    def _format_number(value: float) -> str:
+        if float(value).is_integer():
+            return str(int(value))
+        return str(value)
+
+    @staticmethod
+    def _eval_value(text: str) -> str:
+        text = text.strip()
+        if not text:
+            return text
+        try:
+            float(text)
+            return text
+        except (ValueError, TypeError):
+            pass
+        # Only evaluate strings that consist solely of numbers/operators, so
+        # strings such as "abc" are preserved.  ISO dates are kept as text.
+        if re.fullmatch(r"\d{4}-\d{1,2}-\d{1,2}", text):
+            return text
+        if re.fullmatch(r"[0-9+\-*/().\s]+", text) and re.search(r"[+\-*/()]", text):
+            try:
+                return RulesEngine._format_number(RulesEngine._calculate(text))
+            except Exception:
+                pass
+        return text
+
     @staticmethod
     def _calculate(expr: str) -> float:
         expr = expr.strip()
@@ -1436,37 +1944,67 @@ class RulesEngine:
 
     @staticmethod
     def _safe_eval(expr: str) -> float:
-        tokens: list[str] = []
-        i = 0
-        while i < len(expr):
-            ch = expr[i]
-            if ch in RulesEngine._SAFE_EVAL_OPERATORS or ch in "()":
-                tokens.append(ch)
-                i += 1
-            else:
-                j = i
-                while j < len(expr) and (expr[j].isdigit() or expr[j] == "."):
-                    j += 1
-                tokens.append(expr[i:j])
-                i = j
-        output: list[float] = []
-        ops: list[str] = []
-        for t in tokens:
-            if t not in RulesEngine._SAFE_EVAL_OPERATORS and t not in "()":
-                output.append(float(t))
-            elif t == "(":
-                ops.append(t)
-            elif t == ")":
-                while ops and ops[-1] != "(":
-                    RulesEngine._apply_op(output, ops.pop())
-                ops.pop()
-            else:
-                while ops and ops[-1] != "(" and RulesEngine._SAFE_EVAL_PRIORITY.get(ops[-1], 0) >= RulesEngine._SAFE_EVAL_PRIORITY.get(t, 0):
-                    RulesEngine._apply_op(output, ops.pop())
-                ops.append(t)
-        while ops:
-            RulesEngine._apply_op(output, ops.pop())
-        return output[0] if output else 0.0
+        """Evaluate a simple arithmetic expression.
+
+        Supports ``+ - * /``, parentheses and unary ``+``/``-``.  ESPEasy
+        expressions such as ``-5-(100-60)/5`` start with a negative literal,
+        which the previous shunting-yard implementation dropped.
+        """
+        tokens = re.findall(r"\d*\.?\d+|[()+\-*/]", expr)
+        if not tokens:
+            return 0.0
+
+        pos = 0
+
+        def parse_expression() -> float:
+            nonlocal pos
+            value = parse_term()
+            while pos < len(tokens) and tokens[pos] in ("+", "-"):
+                op = tokens[pos]
+                pos += 1
+                right = parse_term()
+                value = value + right if op == "+" else value - right
+            return value
+
+        def parse_term() -> float:
+            nonlocal pos
+            value = parse_factor()
+            while pos < len(tokens) and tokens[pos] in ("*", "/"):
+                op = tokens[pos]
+                pos += 1
+                right = parse_factor()
+                if op == "*":
+                    value *= right
+                else:
+                    value = 0.0 if right == 0 else value / right
+            return value
+
+        def parse_factor() -> float:
+            nonlocal pos
+            if pos < len(tokens) and tokens[pos] in ("+", "-"):
+                op = tokens[pos]
+                pos += 1
+                value = parse_factor()
+                return -value if op == "-" else value
+            if pos < len(tokens) and tokens[pos] == "(":
+                pos += 1
+                value = parse_expression()
+                if pos < len(tokens) and tokens[pos] == ")":
+                    pos += 1
+                return value
+            if pos < len(tokens):
+                token = tokens[pos]
+                pos += 1
+                try:
+                    return float(token)
+                except ValueError:
+                    return 0.0
+            return 0.0
+
+        try:
+            return parse_expression()
+        except Exception:
+            return 0.0
 
     @staticmethod
     def _apply_op(output: list[float], op: str) -> None:
@@ -1502,14 +2040,30 @@ class RulesEngine:
         for nr, expiry in list(self._timers.items()):
             if now >= expiry:
                 self._timers.pop(nr, None)
-                asyncio.ensure_future(self.fire_event(f"Timer#{nr}"))
+                asyncio.ensure_future(self.fire_event(
+                    f"Rules#Timer={nr}", {"event_values": [str(nr)]}))
         for nr, interval in list(self._loop_timers.items()):
             if nr in self._paused_timers:
                 continue
             expiry = self._timers.get(nr)
             if expiry is None or now >= expiry:
                 self._timers[nr] = now + interval
-                asyncio.ensure_future(self.fire_event(f"Timer#{nr}"))
+                asyncio.ensure_future(self.fire_event(
+                    f"Rules#Timer={nr}", {"event_values": [str(nr)]}))
+        self.check_clock()
+
+    def check_clock(self) -> None:
+        minute_key = time.strftime("%Y-%m-%d %H:%M")
+        if self._last_clock_minute == minute_key:
+            return
+        self._last_clock_minute = minute_key
+        day_names = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+        day = day_names[time.localtime().tm_wday]
+        hhmm = time.strftime("%H:%M")
+        asyncio.ensure_future(self.fire_event(
+            f"Clock#Time={day},{hhmm}",
+            {"event_values": [hhmm], "weekday": day},
+        ))
 
     def get_vars(self) -> dict[str, float]:
         return dict(self._vars)

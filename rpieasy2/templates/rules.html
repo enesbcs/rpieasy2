@@ -112,7 +112,7 @@ function fetchRulesState() {
         if (data.timers && Object.keys(data.timers).length > 0) {
             html += '<h4>Active Timers</h4><table class="multirow" style="font-size:11px;">';
             for (var k in data.timers) {
-                html += '<tr><td>Timer#' + k + '</td><td>' + data.timers[k] + 's</td></tr>';
+                html += '<tr><td>Rules#Timer=' + k + '</td><td>' + data.timers[k] + 's</td></tr>';
             }
             html += '</table>';
         }
@@ -642,17 +642,22 @@ function formatRules() {
 <b>Trigger:</b>
 on System#Boot do ... endon
 on taskname#valuename do ... endon
-on Clock#Time=HH:MM do ... endon
+on Clock#Time=Day,HH:MM do ... endon
+on Rules#Timer=N do ... endon
 on eventname do ... endon
+on eventname=value do ... endon
 
 <b>Conditions:</b>
 if [task#val] = value
 if %var% > value
 if %var% != %othervar%
+if %var% = 1 and %othervar% &lt; 5
+if %eventvalue1% = 10
+elseif ... / else / endif
 
 <b>Commands:</b>
-event,&lt;name&gt;
-TaskValueSet,&lt;task&gt;,&lt;nr&gt;,&lt;val&gt;
+event,&lt;name&gt;[,&lt;value&gt;]
+TaskValueSet,&lt;task&gt;,&lt;nr&gt;,&lt;expression&gt;
 let,&lt;var&gt;,&lt;val&gt;
 inc,&lt;var&gt;[,&lt;amount&gt;]
 dec,&lt;var&gt;[,&lt;amount&gt;]
